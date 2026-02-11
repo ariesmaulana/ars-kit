@@ -1,0 +1,22 @@
+[
+  {
+    "label": "go test",
+    "command": "go test -v ./... -count=1 -v",
+    "use_new_terminal": false
+  },
+  {
+    "label": "go test current package",
+    "command": "go test -v .",
+    "use_new_terminal": false
+  },
+  {
+    "label": "go test with race detector",
+    "command": "go test -v -race ./...",
+    "use_new_terminal": false
+  },
+  {
+    "label": "go test with coverage",
+    "command": "go test -v -cover ./...",
+    "use_new_terminal": false
+  }
+]

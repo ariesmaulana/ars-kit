@@ -1,0 +1,922 @@
+basePath: /
+definitions:
+  finance.AddPlanItemRequest:
+    properties:
+      category:
+        enum:
+        - income
+        - expense
+        type: string
+      spending_plan:
+        type: integer
+      title:
+        type: string
+    required:
+    - category
+    - spending_plan
+    - title
+    type: object
+  finance.AddPlanItemResponse:
+    properties:
+      message:
+        type: string
+      plan_item:
+        $ref: '#/definitions/finance.PlanItemDTO'
+      success:
+        type: boolean
+    type: object
+  finance.CreatePlanRequest:
+    properties:
+      member_id:
+        type: integer
+      month:
+        maximum: 12
+        minimum: 1
+        type: integer
+      plan_items:
+        items:
+          $ref: '#/definitions/finance.PlanItemInput'
+        minItems: 1
+        type: array
+      year:
+        minimum: 2000
+        type: integer
+    required:
+    - member_id
+    - month
+    - plan_items
+    - year
+    type: object
+  finance.DeletePlanItemResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.DeletePlanResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.PlanDTO:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      member_id:
+        type: integer
+      month:
+        type: integer
+      updated_at:
+        type: string
+      year:
+        type: integer
+    type: object
+  finance.PlanDetailResponse:
+    properties:
+      message:
+        type: string
+      plan:
+        $ref: '#/definitions/finance.PlanDTO'
+      plan_items:
+        items:
+          $ref: '#/definitions/finance.PlanItemDTO'
+        type: array
+      success:
+        type: boolean
+    type: object
+  finance.PlanItemDTO:
+    properties:
+      actual_spending:
+        type: integer
+      category:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      plan_id:
+        type: integer
+      spending_plan:
+        type: integer
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  finance.PlanItemInput:
+    properties:
+      category:
+        type: string
+      spendingPlan:
+        type: integer
+      title:
+        type: string
+    type: object
+  finance.PlanResponse:
+    properties:
+      data:
+        $ref: '#/definitions/finance.PlanDTO'
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.PlansResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/finance.PlanDTO'
+        type: array
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.UpdateActualSpendRequest:
+    properties:
+      actual_spend:
+        type: integer
+    type: object
+  finance.UpdateActualSpendResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.UpdatePlanItemRequest:
+    properties:
+      spending_plan:
+        type: integer
+      title:
+        type: string
+    required:
+    - title
+    type: object
+  finance.UpdatePlanItemResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  finance.UpdatePlanRequest:
+    properties:
+      month:
+        maximum: 12
+        minimum: 1
+        type: integer
+      year:
+        minimum: 2000
+        type: integer
+    required:
+    - month
+    - year
+    type: object
+  finance.UpdatePlanResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  user.AddMemberRequest:
+    properties:
+      monthly_income:
+        minimum: 0
+        type: integer
+      name:
+        minLength: 2
+        type: string
+    required:
+    - name
+    type: object
+  user.AuthResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/user.UserDTO'
+    type: object
+  user.LoginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  user.MemberDTO:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      monthly_income:
+        type: integer
+      name:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
+  user.MembersResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/user.MemberDTO'
+        type: array
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  user.RegisterRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      password:
+        minLength: 6
+        type: string
+      username:
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - email
+    - full_name
+    - password
+    - username
+    type: object
+  user.UpdateMemberInfoRequest:
+    properties:
+      monthly_income:
+        minimum: 0
+        type: integer
+      name:
+        minLength: 2
+        type: string
+    required:
+    - name
+    type: object
+  user.UpdatePasswordRequest:
+    properties:
+      new_password:
+        minLength: 6
+        type: string
+      old_password:
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  user.UpdateUsernameRequest:
+    properties:
+      new_username:
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - new_username
+    type: object
+  user.UserDTO:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      updated_at:
+        type: string
+      username:
+        type: string
+    type: object
+  user.UserResponse:
+    properties:
+      data:
+        $ref: '#/definitions/user.UserDTO'
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Type "Bearer" followed by a space and JWT token.
+  title: Monthly Expense API
+  version: "1.0"
+paths:
+  /api/v1/finances/members/{memberId}/plans:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve all financial plans for a specific member
+      parameters:
+      - description: Member ID
+        in: path
+        name: memberId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.PlansResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.PlansResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.PlansResponse'
+      security:
+      - BearerAuth: []
+      summary: Get all plans for a member
+      tags:
+      - finances
+  /api/v1/finances/plan-items/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a specific plan item from a financial plan
+      parameters:
+      - description: Plan Item ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.DeletePlanItemResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.DeletePlanItemResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.DeletePlanItemResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a plan item
+      tags:
+      - finances
+    put:
+      consumes:
+      - application/json
+      description: Update the title and spending plan of a plan item
+      parameters:
+      - description: Plan Item ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Plan item update data
+        in: body
+        name: plan_item
+        required: true
+        schema:
+          $ref: '#/definitions/finance.UpdatePlanItemRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanItemResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanItemResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanItemResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a plan item
+      tags:
+      - finances
+  /api/v1/finances/plan-items/{id}/actual-spend:
+    put:
+      consumes:
+      - application/json
+      description: Update the actual spending amount for a specific plan item
+      parameters:
+      - description: Plan Item ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Actual spend data
+        in: body
+        name: actual_spend
+        required: true
+        schema:
+          $ref: '#/definitions/finance.UpdateActualSpendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.UpdateActualSpendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.UpdateActualSpendResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.UpdateActualSpendResponse'
+      security:
+      - BearerAuth: []
+      summary: Update actual spending for a plan item
+      tags:
+      - finances
+  /api/v1/finances/plans:
+    post:
+      consumes:
+      - application/json
+      description: Create a new financial plan with plan items for a member
+      parameters:
+      - description: Plan creation data
+        in: body
+        name: plan
+        required: true
+        schema:
+          $ref: '#/definitions/finance.CreatePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/finance.PlanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.PlanResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.PlanResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new financial plan
+      tags:
+      - finances
+  /api/v1/finances/plans/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a financial plan and all its associated plan items
+      parameters:
+      - description: Plan ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.DeletePlanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.DeletePlanResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.DeletePlanResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a financial plan
+      tags:
+      - finances
+    get:
+      consumes:
+      - application/json
+      description: Retrieve a financial plan with all its plan items
+      parameters:
+      - description: Plan ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.PlanDetailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.PlanDetailResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.PlanDetailResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/finance.PlanDetailResponse'
+      security:
+      - BearerAuth: []
+      summary: Get plan details with items
+      tags:
+      - finances
+    put:
+      consumes:
+      - application/json
+      description: Update the month and year of an existing financial plan
+      parameters:
+      - description: Plan ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Plan update data
+        in: body
+        name: plan
+        required: true
+        schema:
+          $ref: '#/definitions/finance.UpdatePlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.UpdatePlanResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a financial plan
+      tags:
+      - finances
+  /api/v1/finances/plans/{id}/items:
+    post:
+      description: Add a new plan item to an existing financial plan
+      parameters:
+      - description: Plan ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Plan item data
+        in: body
+        name: plan_item
+        required: true
+        schema:
+          $ref: '#/definitions/finance.AddPlanItemRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/finance.AddPlanItemResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/finance.AddPlanItemResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/finance.AddPlanItemResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a new item to an existing plan
+      tags:
+      - finances
+  /api/v1/users/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate user and return JWT token
+      parameters:
+      - description: User credentials
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/user.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+      summary: Login user
+      tags:
+      - users
+  /api/v1/users/logout:
+    post:
+      consumes:
+      - application/json
+      description: Clear authentication token
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      summary: Logout user
+      tags:
+      - users
+  /api/v1/users/members:
+    get:
+      consumes:
+      - application/json
+      description: Get all members for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+      security:
+      - BearerAuth: []
+      summary: Get user members
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Add a new member for the authenticated user
+      parameters:
+      - description: Member data
+        in: body
+        name: member
+        required: true
+        schema:
+          $ref: '#/definitions/user.AddMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.MembersResponse'
+      security:
+      - BearerAuth: []
+      summary: Add a new member
+      tags:
+      - users
+  /api/v1/users/members/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a specific member by ID
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a member
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Update name and monthly income for a specific member
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Member update data
+        in: body
+        name: member
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateMemberInfoRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update member information
+      tags:
+      - users
+  /api/v1/users/profile:
+    get:
+      consumes:
+      - application/json
+      description: Get the authenticated user's profile
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Get user profile
+      tags:
+      - users
+  /api/v1/users/profile/password:
+    put:
+      consumes:
+      - application/json
+      description: Update the authenticated user's password
+      parameters:
+      - description: Password update data
+        in: body
+        name: password
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdatePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update password
+      tags:
+      - users
+  /api/v1/users/profile/username:
+    put:
+      consumes:
+      - application/json
+      description: Update the authenticated user's username
+      parameters:
+      - description: New username
+        in: body
+        name: username
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateUsernameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update username
+      tags:
+      - users
+  /api/v1/users/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account
+      parameters:
+      - description: User registration data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/user.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+      summary: Register a new user
+      tags:
+      - users
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
