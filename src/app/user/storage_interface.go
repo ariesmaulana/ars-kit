@@ -49,6 +49,16 @@ type StorageTx interface {
 
 	DeleteMemberById(ctx context.Context, memberId int) error
 
+	// Pessimistic Locking Methods (FOR UPDATE)
+	// These methods acquire row-level locks and return the locked entity
+	// See LOCK_RULES.md for lock ordering requirements
+
+	// LockUserById locks a user row for update and returns the user
+	LockUserById(ctx context.Context, id int) (User, StorageErrorType, error)
+
+	// LockMemberById locks a member row for update and returns the member
+	LockMemberById(ctx context.Context, id int) (Member, StorageErrorType, error)
+
 	// Commit commits the transaction
 	Commit() error
 

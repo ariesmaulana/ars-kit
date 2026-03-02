@@ -120,7 +120,7 @@ type AddMemberOutput struct {
 	Success bool
 	Message string
 	TraceId string
-	Members []Member
+	Member  Member
 }
 
 type GetMemberByIdInput struct {

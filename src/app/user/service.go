@@ -208,11 +208,16 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	}
 	defer db.Rollback()
 
-	// Defensive code to make sure user exists
-	data, err := db.GetUserById(ctx, input.Id)
+	// Lock user row for update (pessimistic lock)
+	_, errType, err := db.LockUserById(ctx, input.Id)
 	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get user")
-		resp.Message = "No Username Found"
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "No Username Found"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update username"
 		return resp
 	}
 
@@ -225,7 +230,7 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	}
 
 	// Get updated user
-	data, err = db.GetUserById(ctx, input.Id)
+	data, err := db.GetUserById(ctx, input.Id)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get user")
 		resp.Message = "No Username Found"
@@ -284,11 +289,16 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 	}
 	defer db.Rollback()
 
-	// Defensive code to make sure user exists
-	_, err = db.GetUserById(ctx, input.Id)
+	// Lock user row for update (pessimistic lock)
+	_, errType, err := db.LockUserById(ctx, input.Id)
 	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get user")
-		resp.Message = "User not found"
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update password"
 		return resp
 	}
 
@@ -430,10 +440,10 @@ func (s *service) AddMember(ctx context.Context, input *AddMemberInput) *AddMemb
 		return resp
 	}
 
-	// Get all members for the user
-	members, err := db.GetMembersByUserId(ctx, input.Id)
+	// Get the created member
+	member, _, err := db.GetMemberById(ctx, memberId)
 	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get members")
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get created member")
 		resp.Message = "Failed to add member"
 		return resp
 	}
@@ -455,7 +465,7 @@ func (s *service) AddMember(ctx context.Context, input *AddMemberInput) *AddMemb
 
 	resp.Success = true
 	resp.Message = "Member added successfully"
-	resp.Members = members
+	resp.Member = member
 
 	return resp
 }
@@ -587,14 +597,37 @@ func (s *service) UpdateMemberInfo(ctx context.Context, input *UpdateMemberInfoI
 	}
 	defer db.Rollback()
 
-	member, _, err := db.GetMemberById(ctx, input.Id)
+	// LOCK ORDERING RULE: Lock user first (hierarchy), then member
+	// This prevents deadlocks when multiple transactions access these tables
+
+	// Step 1: Lock user first (higher in hierarchy)
+	user, errType, err := db.LockUserById(ctx, input.RequesterId)
 	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
-		resp.Message = "Member not found"
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Requester not found")
+			resp.Message = "Unauthorized update"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update member info"
 		return resp
 	}
 
-	if member.UserId != input.RequesterId {
+	// Step 2: Lock member (lower in hierarchy)
+	member, errType, err := db.LockMemberById(ctx, input.Id)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
+			resp.Message = "Member not found"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock member")
+		resp.Message = "Failed to update member info"
+		return resp
+	}
+
+	// Verify ownership using locked entities
+	if member.UserId != user.Id {
 		log.Warn().Str("traceId", input.TraceId).Msg("Unauthorized update")
 		resp.Message = "Unauthorized update"
 		return resp
@@ -650,7 +683,24 @@ func (s *service) DeleteMember(ctx context.Context, input *DeleteMemberInput) *D
 	}
 	defer db.Rollback()
 
-	member, errType, err := db.GetMemberById(ctx, input.Id)
+	// LOCK ORDERING RULE: Lock user first (hierarchy), then member
+	// This prevents deadlocks when multiple transactions access these tables
+
+	// Step 1: Lock user first (higher in hierarchy)
+	user, errType, err := db.LockUserById(ctx, input.RequesterId)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Requester not found")
+			resp.Message = "Unauthorized delete"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to delete member"
+		return resp
+	}
+
+	// Step 2: Lock member (lower in hierarchy)
+	member, errType, err := db.LockMemberById(ctx, input.Id)
 	if err != nil {
 		if errType == ErrTypeNotFound {
 			log.Info().
@@ -661,11 +711,13 @@ func (s *service) DeleteMember(ctx context.Context, input *DeleteMemberInput) *D
 			resp.Message = "Member deleted successfully"
 			return resp
 		}
-		log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock member")
+		resp.Message = "Failed to delete member"
 		return resp
 	}
 
-	if member.UserId != input.RequesterId {
+	// Verify ownership using locked entities
+	if member.UserId != user.Id {
 		log.Warn().Str("traceId", input.TraceId).Msg("Unauthorized delete")
 		resp.Message = "Unauthorized delete"
 		return resp

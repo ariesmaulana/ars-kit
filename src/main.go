@@ -77,14 +77,22 @@ func main() {
 	userHandler := user.NewHandler(userService, jwtService)
 	userHandler.RegisterRoutes(e)
 
+	// Configure server with timeouts to prevent slow clients from consuming resources
+	server := &http.Server{
+		Addr:         ":" + conf.Port,
+		ReadTimeout:  15 * time.Second, // Time to read request headers and body
+		WriteTimeout: 15 * time.Second, // Time to write response
+		IdleTimeout:  60 * time.Second, // Keep-alive timeout for idle connections
+	}
+
+	if conf.Port == "" {
+		server.Addr = ":8080"
+	}
+
 	// Start server in a goroutine
 	go func() {
-		addr := ":" + conf.Port
-		if conf.Port == "" {
-			addr = ":8080"
-		}
-		log.Info().Str("address", addr).Msg("Starting server")
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+		log.Info().Str("address", server.Addr).Msg("Starting server")
+		if err := e.StartServer(server); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("Server failed to start")
 		}
 	}()

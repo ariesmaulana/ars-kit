@@ -40,12 +40,16 @@ func NewPostgresDB(cfg *config.Config) (*PostgresDB, error) {
 
 	// Connection pool configuration optimized for pgBouncer
 	// When using pgBouncer in transaction mode, keep these conservative
-	poolConfig.MaxConns = 25                      // Maximum connections in pool
-	poolConfig.MinConns = 5                       // Minimum idle connections
-	poolConfig.MaxConnLifetime = time.Hour        // Connection lifetime
-	poolConfig.MaxConnIdleTime = 30 * time.Minute // Idle connection timeout
-	poolConfig.HealthCheckPeriod = time.Minute    // Health check interval
-	poolConfig.ConnConfig.ConnectTimeout = 5 * time.Second
+	// These values can be configured via environment variables
+	poolConfig.MaxConns = cfg.DBMaxConns                                                // Maximum connections in pool
+	poolConfig.MinConns = cfg.DBMinConns                                                // Minimum idle connections
+	poolConfig.MaxConnLifetime = time.Duration(cfg.DBMaxConnLifetime) * time.Minute     // Connection lifetime
+	poolConfig.MaxConnIdleTime = time.Duration(cfg.DBMaxConnIdleTime) * time.Minute     // Idle connection timeout
+	poolConfig.HealthCheckPeriod = time.Duration(cfg.DBHealthCheckPeriod) * time.Second // Health check interval
+	poolConfig.ConnConfig.ConnectTimeout = time.Duration(cfg.DBConnectTimeout) * time.Second
+
+	// Add jitter to avoid connection churn spikes
+	poolConfig.MaxConnLifetimeJitter = 5 * time.Minute
 
 	// Create the connection pool
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

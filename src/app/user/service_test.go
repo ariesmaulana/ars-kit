@@ -1046,7 +1046,6 @@ func TestUserAddMember(t *testing.T) {
 			type expected struct {
 				success       bool
 				message       string
-				memberCount   int
 				memberCreated bool
 			}
 
@@ -1106,18 +1105,9 @@ func TestUserAddMember(t *testing.T) {
 
 				// For successful member addition
 				assert.Equal(t, len(initialMembers)+1, len(afterMembers), r.name)
-				assert.Equal(t, r.expected.memberCount, len(output.Members), r.name)
 
-				// Find the newly added member
-				var foundMember user.Member
-				for i := range output.Members {
-					if output.Members[i].Name == r.input.name {
-						foundMember = output.Members[i]
-						break
-					}
-				}
-
-				assert.NotNil(t, foundMember, r.name+" - member should be in output")
+				// The output now contains only the created member
+				foundMember := output.Member
 				assert.NotZero(t, foundMember.Id, r.name)
 				assert.Equal(t, r.input.userID, foundMember.UserId, r.name)
 				assert.Equal(t, r.input.name, foundMember.Name, r.name)
@@ -1156,7 +1146,6 @@ func TestUserAddMember(t *testing.T) {
 						expected: &expected{
 							success:       true,
 							message:       "Member added successfully",
-							memberCount:   1,
 							memberCreated: true,
 						},
 					},
@@ -1170,7 +1159,6 @@ func TestUserAddMember(t *testing.T) {
 						expected: &expected{
 							success:       true,
 							message:       "Member added successfully",
-							memberCount:   2,
 							memberCreated: true,
 						},
 					},
@@ -1184,7 +1172,6 @@ func TestUserAddMember(t *testing.T) {
 						expected: &expected{
 							success:       true,
 							message:       "Member added successfully",
-							memberCount:   3,
 							memberCreated: true,
 						},
 					},
@@ -1198,7 +1185,6 @@ func TestUserAddMember(t *testing.T) {
 						expected: &expected{
 							success:       true,
 							message:       "Member added successfully",
-							memberCount:   1,
 							memberCreated: true,
 						},
 					},
@@ -1212,7 +1198,6 @@ func TestUserAddMember(t *testing.T) {
 						expected: &expected{
 							success:       true,
 							message:       "Member added successfully",
-							memberCount:   2,
 							memberCreated: true,
 						},
 					},

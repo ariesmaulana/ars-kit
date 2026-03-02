@@ -18,3 +18,6 @@ create table if not exists members (
     updated_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+-- Index for fast lookups of members by user_id
+CREATE INDEX IF NOT EXISTS idx_members_user_id ON members(user_id);

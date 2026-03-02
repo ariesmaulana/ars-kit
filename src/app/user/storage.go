@@ -161,6 +161,36 @@ func (st *storageTx) DeleteMemberById(ctx context.Context, memberId int) error {
 	return nil
 }
 
+// LockUserById locks a user row for update and returns the user
+// This implements pessimistic locking to prevent concurrent modifications
+func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
+	query := `SELECT id, username, email, full_name, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
+	row := st.tx.QueryRow(ctx, query, id)
+	user, err := convertUserRow(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrTypeNotFound, fmt.Errorf("failed to lock user by id: %w", err)
+		}
+		return User{}, ErrTypeCommon, fmt.Errorf("failed to lock user by id: %w", err)
+	}
+	return user, ErrTypeNone, nil
+}
+
+// LockMemberById locks a member row for update and returns the member
+// This implements pessimistic locking to prevent concurrent modifications
+func (st *storageTx) LockMemberById(ctx context.Context, id int) (Member, StorageErrorType, error) {
+	query := `SELECT id, user_id, name, monthly_income, created_at, updated_at FROM members WHERE id = $1 FOR UPDATE`
+	row := st.tx.QueryRow(ctx, query, id)
+	member, err := convertMember(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Member{}, ErrTypeNotFound, fmt.Errorf("failed to lock member by id: %w", err)
+		}
+		return Member{}, ErrTypeCommon, fmt.Errorf("failed to lock member by id: %w", err)
+	}
+	return member, ErrTypeNone, nil
+}
+
 func convertUserRow(row pgx.Row) (User, error) {
 	var user User
 	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &user.CreatedAt, &user.UpdatedAt)

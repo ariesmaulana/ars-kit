@@ -124,6 +124,13 @@ type MembersResponse struct {
 	Data    []MemberDTO `json:"data,omitempty"`
 }
 
+// MemberResponse represents the HTTP response for single member operations
+type MemberResponse struct {
+	Success bool       `json:"success"`
+	Message string     `json:"message"`
+	Data    *MemberDTO `json:"data,omitempty"`
+}
+
 func toUserDTO(user User) UserDTO {
 	return UserDTO{
 		Id:        user.Id,
@@ -491,16 +498,16 @@ func (h *Handler) GetMembers(c echo.Context) error {
 // @Produce json
 // @Security BearerAuth
 // @Param member body AddMemberRequest true "Member data"
-// @Success 201 {object} MembersResponse
-// @Failure 400 {object} MembersResponse
-// @Failure 401 {object} MembersResponse
+// @Success 201 {object} MemberResponse
+// @Failure 400 {object} MemberResponse
+// @Failure 401 {object} MemberResponse
 // @Router /api/v1/users/members [post]
 func (h *Handler) AddMember(c echo.Context) error {
 	traceID := xid.New().String()
 
 	userID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, MembersResponse{
+		return c.JSON(http.StatusUnauthorized, MemberResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
@@ -508,7 +515,7 @@ func (h *Handler) AddMember(c echo.Context) error {
 
 	var req AddMemberRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, MembersResponse{
+		return c.JSON(http.StatusBadRequest, MemberResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
@@ -526,17 +533,17 @@ func (h *Handler) AddMember(c echo.Context) error {
 		if output.Message == "User not found" {
 			status = http.StatusNotFound
 		}
-		return c.JSON(status, MembersResponse{
+		return c.JSON(status, MemberResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	dtos := toMemberDTOs(output.Members)
-	return c.JSON(http.StatusCreated, MembersResponse{
+	dto := toMemberDTO(output.Member)
+	return c.JSON(http.StatusCreated, MemberResponse{
 		Success: true,
 		Message: output.Message,
-		Data:    dtos,
+		Data:    &dto,
 	})
 }
 
