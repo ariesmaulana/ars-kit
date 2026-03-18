@@ -136,15 +136,21 @@ type GetMemberByIdOutput struct {
 }
 
 type GetMembersByUserIdInput struct {
-	TraceId string
-	UserId  int
+	TraceId  string
+	UserId   int
+	Page     int // 1-based; defaults to 1
+	PageSize int // items per page; defaults to 10, max 100
 }
 
 type GetMembersByUserIdOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	Members []Member
+	Success    bool
+	Message    string
+	TraceId    string
+	Members    []Member
+	Total      int // total number of members across all pages
+	TotalPages int
+	Page       int
+	PageSize   int
 }
 
 type UpdateMemberInfoInput struct {

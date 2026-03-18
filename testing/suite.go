@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/config"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,7 +23,6 @@ type Suite struct {
 	pool      *pgxpool.Pool
 	schema    string
 	beforeFns []func(*AppContext)
-	sqlFiles  []string
 }
 
 // AppContext holds initialized app components for testing
@@ -28,9 +31,7 @@ type AppContext struct {
 }
 
 // NewSuite creates a new test suite instance
-// Multiple SQL files can be passed: NewSuite(cfg, "todo.sql", "user.sql", "category.sql")
-// Files are executed in order from database/sql directory
-func NewSuite(cfg *config.Config, sqlFiles ...string) (*Suite, error) {
+func NewSuite(cfg *config.Config) (*Suite, error) {
 	// Connect to database without schema isolation initially
 	dsn := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
@@ -52,9 +53,8 @@ func NewSuite(cfg *config.Config, sqlFiles ...string) (*Suite, error) {
 	}
 
 	s := &Suite{
-		config:   cfg,
-		pool:     pool,
-		sqlFiles: sqlFiles,
+		config: cfg,
+		pool:   pool,
 	}
 
 	return s, nil
@@ -94,8 +94,8 @@ func (s *Suite) Runs(t *testing.T, scenario string, fn func(t *testing.T, app *A
 		}
 		defer schemaPool.Close()
 
-		// Run migrations
-		if err := s.runMigrations(schemaPool); err != nil {
+		// Run migrations via golang-migrate
+		if err := s.runMigrations(schema); err != nil {
 			t.Fatalf("Failed to run migrations: %v", err)
 		}
 
@@ -165,46 +165,56 @@ func (s *Suite) createSchemaPool(schema string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// runMigrations runs database migrations in the schema
-func (s *Suite) runMigrations(pool *pgxpool.Pool) error {
-	ctx := context.Background()
-
-	// Get project root directory
-	projectRoot, err := os.Getwd()
+// runMigrations runs golang-migrate migrations into the isolated schema
+func (s *Suite) runMigrations(schema string) error {
+	projectRoot, err := findProjectRoot()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return err
 	}
 
-	// Navigate to project root (assuming tests run from subdirectories)
-	for {
-		if _, err := os.Stat(filepath.Join(projectRoot, "go.mod")); err == nil {
-			break
-		}
-		parent := filepath.Dir(projectRoot)
-		if parent == projectRoot {
-			return fmt.Errorf("could not find project root (go.mod not found)")
-		}
-		projectRoot = parent
+	migrationsPath := "file://" + filepath.Join(projectRoot, "database", "migrations")
+
+	// pgx/v5 driver DSN with search_path to target the isolated schema
+	dsn := fmt.Sprintf(
+		"pgx5://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
+		s.config.DBUser,
+		s.config.DBPass,
+		s.config.DBHost,
+		s.config.DBPort,
+		s.config.DBName,
+		schema,
+	)
+
+	m, err := migrate.New(migrationsPath, dsn)
+	if err != nil {
+		return fmt.Errorf("failed to initialize migrate: %w", err)
 	}
+	defer m.Close()
 
-	sqlDir := filepath.Join(projectRoot, "database", "sql")
-
-	// Execute registered SQL files
-	for _, sqlFile := range s.sqlFiles {
-		sqlPath := filepath.Join(sqlDir, sqlFile)
-
-		sqlContent, err := os.ReadFile(sqlPath)
-		if err != nil {
-			return fmt.Errorf("failed to read SQL file %s: %w", sqlFile, err)
-		}
-
-		_, err = pool.Exec(ctx, string(sqlContent))
-		if err != nil {
-			return fmt.Errorf("failed to execute SQL file %s: %w", sqlFile, err)
-		}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("migration failed: %w", err)
 	}
 
 	return nil
+}
+
+// findProjectRoot walks up directories until go.mod is found
+func findProjectRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("could not find project root (go.mod not found)")
+		}
+		dir = parent
+	}
 }
 
 // Close closes the suite's database connection

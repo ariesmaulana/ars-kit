@@ -1,4 +1,4 @@
-.PHONY: help build build-linux clean test test-verbose run install-deps generate swagger lint
+.PHONY: help build build-linux clean test test-verbose run install-deps generate swagger lint migrate-up migrate-status migrate-create
 
 # Variables
 APP_NAME=ars-kit
@@ -79,5 +79,18 @@ fmt: ## Format code
 
 vet: ## Run go vet
 	$(GOCMD) vet ./...
+
+migrate-up: ## Apply all pending database migrations
+	go run ./cmd/migrate up
+
+migrate-status: ## Show current database migration version
+	go run ./cmd/migrate status
+
+migrate-create: ## Create a new migration file: make migrate-create NAME=description
+	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create NAME=your_description"; exit 1; fi
+	@TS=$$(date +%Y%m%d%H%M%S); \
+	FILE="database/migrations/$${TS}_$(NAME).up.sql"; \
+	touch "$$FILE"; \
+	echo "Created: $$FILE"
 
 .DEFAULT_GOAL := help

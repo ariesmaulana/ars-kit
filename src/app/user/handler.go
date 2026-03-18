@@ -2,9 +2,11 @@ package user
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/rs/xid"
 )
 
@@ -22,17 +24,36 @@ func NewHandler(service Service, jwtService *JWTService) *Handler {
 	}
 }
 
-// RegisterRoutes registers all user routes
-func (h *Handler) RegisterRoutes(e *echo.Echo) {
-	g := e.Group("/api/v1/users")
+// RegisterRoutes registers all user routes under the provided version group.
+// Example: pass e.Group("/api/v1") from main — routes become /api/v1/users/...
+func (h *Handler) RegisterRoutes(g *echo.Group) {
+	users := g.Group("/users")
+
+	// Stricter rate limiting on auth endpoints: 2 req/s per IP, burst of 5
+	authLimiter := middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(
+			middleware.RateLimiterMemoryStoreConfig{
+				Rate:      2,
+				Burst:     5,
+				ExpiresIn: 5 * time.Minute,
+			},
+		),
+		DenyHandler: func(c echo.Context, identifier string, err error) error {
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"success": false,
+				"message": "Too many requests, please try again later",
+			})
+		},
+	})
 
 	// Public routes
-	g.POST("/register", h.Register)
-	g.POST("/login", h.Login)
-	g.POST("/logout", h.Logout)
+	public := users.Group("", authLimiter)
+	public.POST("/register", h.Register)
+	public.POST("/login", h.Login)
+	public.POST("/logout", h.Logout)
 
 	// Protected routes
-	protected := g.Group("")
+	protected := users.Group("")
 	protected.Use(h.jwtService.JWTMiddleware())
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
@@ -102,6 +123,14 @@ type MemberDTO struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// PaginationResponse holds pagination metadata for list responses
+type PaginationResponse struct {
+	Page       int `json:"page"`
+	PageSize   int `json:"page_size"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
 // AuthResponse represents the HTTP response for authentication operations
 type AuthResponse struct {
 	Success bool     `json:"success"`
@@ -117,11 +146,12 @@ type UserResponse struct {
 	Data    *UserDTO `json:"data,omitempty"`
 }
 
-// MembersResponse represents the HTTP response for members operations
+// MembersResponse represents the HTTP response for members list operations
 type MembersResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    []MemberDTO `json:"data,omitempty"`
+	Success    bool                `json:"success"`
+	Message    string              `json:"message"`
+	Data       []MemberDTO         `json:"data,omitempty"`
+	Pagination *PaginationResponse `json:"pagination,omitempty"`
 }
 
 // MemberResponse represents the HTTP response for single member operations
@@ -446,11 +476,13 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 
 // GetMembers handles GET /api/v1/users/members
 // @Summary Get user members
-// @Description Get all members for the authenticated user
+// @Description Get paginated members for the authenticated user
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param page query int false "Page number (default: 1)"
+// @Param page_size query int false "Items per page (default: 10, max: 100)"
 // @Success 200 {object} MembersResponse
 // @Failure 401 {object} MembersResponse
 // @Failure 404 {object} MembersResponse
@@ -466,9 +498,25 @@ func (h *Handler) GetMembers(c echo.Context) error {
 		})
 	}
 
+	page := 1
+	pageSize := 10
+
+	if p := c.QueryParam("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := c.QueryParam("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+	}
+
 	output := h.service.GetMembersByUserId(c.Request().Context(), &GetMembersByUserIdInput{
-		TraceId: traceID,
-		UserId:  userID,
+		TraceId:  traceID,
+		UserId:   userID,
+		Page:     page,
+		PageSize: pageSize,
 	})
 
 	if !output.Success {
@@ -487,6 +535,12 @@ func (h *Handler) GetMembers(c echo.Context) error {
 		Success: true,
 		Message: output.Message,
 		Data:    dtos,
+		Pagination: &PaginationResponse{
+			Page:       output.Page,
+			PageSize:   output.PageSize,
+			Total:      output.Total,
+			TotalPages: output.TotalPages,
+		},
 	})
 }
 

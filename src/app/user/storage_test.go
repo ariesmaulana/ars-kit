@@ -295,8 +295,9 @@ func TestStorageGetMembersByUserId(t *testing.T) {
 				assert.Nil(t, err)
 				defer tx.Rollback()
 
-				members, err := tx.GetMembersByUserId(ctx, existingUser.Id)
+				members, total, err := tx.GetMembersByUserId(ctx, existingUser.Id, 100, 0)
 				assert.Nil(t, err)
+				assert.Equal(t, 2, total)
 				assert.Len(t, members, 2)
 				assert.Equal(t, member1.Id, members[0].Id)
 				assert.Equal(t, member1.Name, members[0].Name)
@@ -314,8 +315,9 @@ func TestStorageGetMembersByUserId(t *testing.T) {
 				assert.Nil(t, err)
 				defer tx.Rollback()
 
-				members, err := tx.GetMembersByUserId(ctx, existingUser.Id)
+				members, total, err := tx.GetMembersByUserId(ctx, existingUser.Id, 100, 0)
 				assert.Nil(t, err)
+				assert.Equal(t, 0, total)
 				assert.Len(t, members, 0)
 			})
 		})

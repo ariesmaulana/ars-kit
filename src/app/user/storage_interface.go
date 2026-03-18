@@ -41,7 +41,9 @@ type StorageTx interface {
 
 	InsertMember(ctx context.Context, userId int, name string, monthlyIncome int) (int, error)
 
-	GetMembersByUserId(ctx context.Context, userId int) ([]Member, error)
+	// GetMembersByUserId retrieves paginated members for a user.
+	// Returns the members slice, total count across all pages, and any error.
+	GetMembersByUserId(ctx context.Context, userId, limit, offset int) ([]Member, int, error)
 
 	GetMemberById(ctx context.Context, memberId int) (Member, StorageErrorType, error)
 

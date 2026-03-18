@@ -119,15 +119,25 @@ func (st *storageTx) InsertMember(ctx context.Context, userId int, name string, 
 	return id, nil
 }
 
-func (st *storageTx) GetMembersByUserId(ctx context.Context, userId int) ([]Member, error) {
-	query := `SELECT id, user_id, name, monthly_income, created_at, updated_at FROM members WHERE user_id = $1`
-	rows, err := st.tx.Query(ctx, query, userId)
+func (st *storageTx) GetMembersByUserId(ctx context.Context, userId, limit, offset int) ([]Member, int, error) {
+	var total int
+	err := st.tx.QueryRow(ctx, `SELECT COUNT(*) FROM members WHERE user_id = $1`, userId).Scan(&total)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get members: %w", err)
+		return nil, 0, fmt.Errorf("failed to count members: %w", err)
+	}
+
+	query := `SELECT id, user_id, name, monthly_income, created_at, updated_at FROM members WHERE user_id = $1 ORDER BY id LIMIT $2 OFFSET $3`
+	rows, err := st.tx.Query(ctx, query, userId, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get members: %w", err)
 	}
 	defer rows.Close()
 
-	return convertListMember(rows)
+	members, err := convertListMember(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return members, total, nil
 }
 
 func (st *storageTx) GetMemberById(ctx context.Context, memberId int) (Member, StorageErrorType, error) {

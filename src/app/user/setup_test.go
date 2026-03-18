@@ -58,7 +58,7 @@ func RunTest(t *testing.T, testFunc func(t *testing.T, suite *TestSuite)) {
 	t.Parallel()
 	cfg := testsuite.InitTestConfig()
 
-	baseSuite, err := testsuite.NewSuite(cfg, "users.sql")
+	baseSuite, err := testsuite.NewSuite(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create test suite: %v", err)
 	}

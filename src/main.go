@@ -9,6 +9,7 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
+	appmw "github.com/ariesmaulana/ars-kit/src/middleware"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -46,6 +47,29 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
+	// Security headers
+	e.Use(appmw.SecurityHeaders())
+
+	// Limit request body size to 1MB to prevent resource exhaustion
+	e.Use(middleware.BodyLimit("1M"))
+
+	// Global rate limiting: 20 req/s per IP with burst of 40
+	e.Use(middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(
+			middleware.RateLimiterMemoryStoreConfig{
+				Rate:      20,
+				Burst:     40,
+				ExpiresIn: 3 * time.Minute,
+			},
+		),
+		DenyHandler: func(c echo.Context, identifier string, err error) error {
+			return c.JSON(http.StatusTooManyRequests, map[string]interface{}{
+				"success": false,
+				"message": "Too many requests, please try again later",
+			})
+		},
+	}))
+
 	// CORS configuration - security-focused
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins:     []string{conf.CORSAllowOrigin},
@@ -60,14 +84,12 @@ func main() {
 		return c.String(http.StatusOK, "alive")
 	})
 
-	// Initialize user app with JWT
-
 	jwtConfig := user.JWTConfig{
 		SecretKey:       conf.JWTSecret,
 		ExpirationHours: 24,
 		CookieName:      "auth_token",
 		CookieDomain:    "",
-		CookieSecure:    false, // Set to true in production with HTTPS
+		CookieSecure:    conf.AppEnv == "production", // Secure cookies in production (HTTPS only)
 		CookieHTTPOnly:  true,
 	}
 
@@ -75,7 +97,10 @@ func main() {
 	userService := user.NewService(userStorage)
 	jwtService := user.NewJWTService(jwtConfig)
 	userHandler := user.NewHandler(userService, jwtService)
-	userHandler.RegisterRoutes(e)
+
+	// API v1 group — pass to each domain handler for clean versioning
+	v1 := e.Group("/api/v1")
+	userHandler.RegisterRoutes(v1)
 
 	// Configure server with timeouts to prevent slow clients from consuming resources
 	server := &http.Server{

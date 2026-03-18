@@ -518,6 +518,20 @@ func (s *service) GetMembersByUserId(ctx context.Context, input *GetMembersByUse
 		return resp
 	}
 
+	// Normalize pagination params
+	page := input.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := input.PageSize
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
 	// Begin transaction
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
@@ -536,22 +550,34 @@ func (s *service) GetMembersByUserId(ctx context.Context, input *GetMembersByUse
 		return resp
 	}
 
-	// Get member by user ID
-	members, err := db.GetMembersByUserId(ctx, input.UserId)
+	// Get paginated members for user
+	members, total, err := db.GetMembersByUserId(ctx, input.UserId, pageSize, offset)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
 		resp.Message = "Member not found"
 		return resp
 	}
 
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
 	log.Info().
 		Str("traceId", input.TraceId).
 		Int("userId", input.UserId).
+		Int("page", page).
+		Int("pageSize", pageSize).
+		Int("total", total).
 		Msg("Member retrieved successfully")
 
 	resp.Success = true
 	resp.Message = "Member retrieved successfully"
 	resp.Members = members
+	resp.Total = total
+	resp.TotalPages = totalPages
+	resp.Page = page
+	resp.PageSize = pageSize
 
 	return resp
 }
