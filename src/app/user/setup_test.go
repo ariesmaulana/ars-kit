@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ariesmaulana/ars-kit/database"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 )
@@ -58,7 +59,7 @@ func RunTest(t *testing.T, testFunc func(t *testing.T, suite *TestSuite)) {
 	t.Parallel()
 	cfg := testsuite.InitTestConfig()
 
-	baseSuite, err := testsuite.NewSuite(cfg)
+	baseSuite, err := testsuite.NewSuite(cfg, database.UserOnly)
 	if err != nil {
 		t.Fatalf("Failed to create test suite: %v", err)
 	}

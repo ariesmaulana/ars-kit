@@ -1,4 +1,4 @@
-.PHONY: help build build-linux clean test test-verbose run install-deps generate swagger lint migrate-up migrate-status migrate-create
+.PHONY: help build build-linux clean test test-verbose run install-deps generate swagger lint migrate-up migrate-down migrate-status migrate-create
 
 # Variables
 APP_NAME=ars-kit
@@ -80,17 +80,23 @@ fmt: ## Format code
 vet: ## Run go vet
 	$(GOCMD) vet ./...
 
-migrate-up: ## Apply all pending database migrations
-	go run ./cmd/migrate up
+migrate-up: ## Apply all pending database migrations (use DOMAIN=x for scoped)
+	go run ./cmd/migrate up $(DOMAIN)
 
-migrate-status: ## Show current database migration version
-	go run ./cmd/migrate status
+migrate-down: ## Roll back one migration version (use DOMAIN=x for scoped)
+	go run ./cmd/migrate down $(DOMAIN)
 
-migrate-create: ## Create a new migration file: make migrate-create NAME=description
-	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create NAME=your_description"; exit 1; fi
-	@TS=$$(date +%Y%m%d%H%M%S); \
-	FILE="database/migrations/$${TS}_$(NAME).up.sql"; \
-	touch "$$FILE"; \
+migrate-status: ## Show current database migration version (use DOMAIN=x for scoped)
+	go run ./cmd/migrate status $(DOMAIN)
+
+migrate-create: ## Create a new migration file: make migrate-create DOMAIN=user NAME=description
+	@if [ -z "$(DOMAIN)" ]; then echo "Usage: make migrate-create DOMAIN=user NAME=your_description"; exit 1; fi
+	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create DOMAIN=user NAME=your_description"; exit 1; fi
+	@TS=$$(date +%Y%m%d_%H%M%S); \
+	DIR="src/app/$(DOMAIN)/sql"; \
+	mkdir -p "$$DIR"; \
+	FILE="$$DIR/$${TS}_$(NAME).sql"; \
+	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$FILE"; \
 	echo "Created: $$FILE"
 
 .DEFAULT_GOAL := help

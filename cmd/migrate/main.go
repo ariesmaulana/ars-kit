@@ -1,20 +1,21 @@
 package main
 
 import (
-	"errors"
+	"context"
+	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
-	"strconv"
 
 	"github.com/ariesmaulana/ars-kit/config"
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/ariesmaulana/ars-kit/database"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: migrate <up|status|force <version>>")
+		fmt.Fprintln(os.Stderr, "usage: migrate <up|down|status> [domain]")
 		os.Exit(1)
 	}
 
@@ -27,69 +28,107 @@ func main() {
 		os.Exit(1)
 	}
 
+	schema := cfg.DBSchema
+	if schema == "" {
+		schema = "public"
+	}
+
 	dsn := fmt.Sprintf(
-		"pgx5://%s:%s@%s:%s/%s?sslmode=disable",
-		cfg.DBUser,
-		cfg.DBPass,
-		cfg.DBHost,
-		cfg.DBPort,
-		cfg.DBName,
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
+		cfg.DBUser, cfg.DBPass, cfg.DBHost, cfg.DBPort, cfg.DBName, schema,
 	)
 
-	fmt.Printf("[migrate] Connecting to database: %s:%s/%s\n", cfg.DBHost, cfg.DBPort, cfg.DBName)
+	fmt.Printf("[migrate] Connecting to database: %s:%s/%s (schema: %s)\n", cfg.DBHost, cfg.DBPort, cfg.DBName, schema)
 
-	migrationsPath := "file://database/migrations"
-	fmt.Printf("[migrate] Migrations path: database/migrations\n")
-
-	m, err := migrate.New(migrationsPath, dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[migrate] failed to initialize: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[migrate] failed to open db: %v\n", err)
 		os.Exit(1)
 	}
-	defer m.Close()
+	defer db.Close()
+
+	// Determine which domains to migrate
+	domains := database.All
+	if len(os.Args) >= 3 {
+		domainName := os.Args[2]
+		domains = filterDomains(domainName)
+		if domains == nil {
+			fmt.Fprintf(os.Stderr, "[migrate] unknown domain: %s\n", domainName)
+			os.Exit(1)
+		}
+		fmt.Printf("[migrate] Scoped to domain: %s\n", domainName)
+	}
+
+	ctx := context.Background()
 
 	switch cmd {
 	case "up":
 		fmt.Println("[migrate] Applying pending migrations...")
-		if err := m.Up(); err != nil {
-			if errors.Is(err, migrate.ErrNoChange) {
-				fmt.Println("[migrate] No pending migrations.")
-				return
-			}
-			version, dirty, _ := m.Version()
-			fmt.Fprintf(os.Stderr, "[migrate] migration failed at version %d (dirty=%v): %v\n", version, dirty, err)
+		if err := database.Run(db, schema, domains); err != nil {
+			fmt.Fprintf(os.Stderr, "[migrate] migration failed: %v\n", err)
 			os.Exit(1)
 		}
-		version, _, _ := m.Version()
-		fmt.Printf("[migrate] ✓ Done — migrated to version %d\n", version)
+		fmt.Println("[migrate] Done.")
+
+	case "down":
+		for _, d := range domains {
+			provider, err := newProvider(db, d)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[migrate] %v\n", err)
+				os.Exit(1)
+			}
+			if _, err := provider.Down(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "[migrate] down failed for %s: %v\n", d.Name, err)
+				os.Exit(1)
+			}
+		}
+		fmt.Println("[migrate] Rolled back one version.")
 
 	case "status":
-		version, dirty, err := m.Version()
-		if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
-			fmt.Fprintf(os.Stderr, "[migrate] failed to get version: %v\n", err)
-			os.Exit(1)
+		for _, d := range domains {
+			provider, err := newProvider(db, d)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[migrate] %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\n[migrate] Domain: %s\n", d.Name)
+			statuses, err := provider.Status(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[migrate] status failed for %s: %v\n", d.Name, err)
+				os.Exit(1)
+			}
+			for _, s := range statuses {
+				state := "Pending"
+				if s.State == goose.StateApplied {
+					state = fmt.Sprintf("Applied  %s", s.AppliedAt.Format("2006-01-02 15:04:05"))
+				}
+				fmt.Printf("    %-14d %s\n", s.Source.Version, state)
+			}
 		}
-		fmt.Printf("[migrate] Current schema version: %d\n", version)
-		fmt.Printf("[migrate] Dirty: %v\n", dirty)
-
-	case "force":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "[migrate] usage: migrate force <version>")
-			os.Exit(1)
-		}
-		v, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[migrate] invalid version: %s\n", os.Args[2])
-			os.Exit(1)
-		}
-		if err := m.Force(v); err != nil {
-			fmt.Fprintf(os.Stderr, "[migrate] force failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("[migrate] ✓ Forced version to %d (dirty flag cleared)\n", v)
 
 	default:
-		fmt.Fprintf(os.Stderr, "[migrate] unknown command: %s (use up, status, or force <version>)\n", cmd)
+		fmt.Fprintf(os.Stderr, "[migrate] unknown command: %s (use up, down, or status)\n", cmd)
 		os.Exit(1)
 	}
+}
+
+func newProvider(db *sql.DB, d database.Domain) (*goose.Provider, error) {
+	sqlFS, err := fs.Sub(d.FS, "sql")
+	if err != nil {
+		return nil, fmt.Errorf("domain %s: sub fs: %w", d.Name, err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, sqlFS)
+	if err != nil {
+		return nil, fmt.Errorf("domain %s: create provider: %w", d.Name, err)
+	}
+	return provider, nil
+}
+
+func filterDomains(name string) []database.Domain {
+	for _, d := range database.All {
+		if d.Name == name {
+			return []database.Domain{d}
+		}
+	}
+	return nil
 }
