@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
@@ -15,11 +16,16 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: migrate <up|down|status> [domain]")
+		fmt.Fprintln(os.Stderr, "usage: migrate <up|down|status|create> [domain] [name]")
 		os.Exit(1)
 	}
 
 	cmd := os.Args[1]
+
+	if cmd == "create" {
+		runCreate()
+		return
+	}
 
 	fmt.Println("[migrate] Loading config...")
 	cfg, err := config.InitConfig()
@@ -131,4 +137,31 @@ func filterDomains(name string) []database.Domain {
 		}
 	}
 	return nil
+}
+
+func runCreate() {
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "usage: migrate create <domain> <name>")
+		os.Exit(1)
+	}
+
+	domain := os.Args[2]
+	name := os.Args[3]
+
+	dir := fmt.Sprintf("src/app/%s/sql", domain)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[migrate] failed to create directory %s: %v\n", dir, err)
+		os.Exit(1)
+	}
+
+	ts := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("%s/%s_%s.sql", dir, ts, name)
+
+	content := "-- +goose Up\n\n-- +goose Down\n"
+	if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "[migrate] failed to create file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("[migrate] Created: %s\n", filename)
 }

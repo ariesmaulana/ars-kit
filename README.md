@@ -40,7 +40,7 @@ Migrations live per-domain in `src/app/<domain>/sql/` using [goose](https://gith
 make migrate-up
 
 # apply single domain
-make migrate-up DOMAIN=user
+make migrate-up user
 
 # rollback one version
 make migrate-down
@@ -49,7 +49,7 @@ make migrate-down
 make migrate-status
 
 # create new migration
-make migrate-create DOMAIN=user NAME=add_roles
+make migrate-create user add_roles
 ```
 
 ### 3. Test

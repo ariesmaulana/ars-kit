@@ -80,23 +80,20 @@ fmt: ## Format code
 vet: ## Run go vet
 	$(GOCMD) vet ./...
 
-migrate-up: ## Apply all pending database migrations (use DOMAIN=x for scoped)
-	go run ./cmd/migrate up $(DOMAIN)
+migrate-up: ## Apply migrations: make migrate-up [domain]
+	go run ./cmd/migrate up $(filter-out $@,$(MAKECMDGOALS))
 
-migrate-down: ## Roll back one migration version (use DOMAIN=x for scoped)
-	go run ./cmd/migrate down $(DOMAIN)
+migrate-down: ## Rollback one version: make migrate-down [domain]
+	go run ./cmd/migrate down $(filter-out $@,$(MAKECMDGOALS))
 
-migrate-status: ## Show current database migration version (use DOMAIN=x for scoped)
-	go run ./cmd/migrate status $(DOMAIN)
+migrate-status: ## Show migration status: make migrate-status [domain]
+	go run ./cmd/migrate status $(filter-out $@,$(MAKECMDGOALS))
 
-migrate-create: ## Create a new migration file: make migrate-create DOMAIN=user NAME=description
-	@if [ -z "$(DOMAIN)" ]; then echo "Usage: make migrate-create DOMAIN=user NAME=your_description"; exit 1; fi
-	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create DOMAIN=user NAME=your_description"; exit 1; fi
-	@TS=$$(date +%Y%m%d_%H%M%S); \
-	DIR="src/app/$(DOMAIN)/sql"; \
-	mkdir -p "$$DIR"; \
-	FILE="$$DIR/$${TS}_$(NAME).sql"; \
-	printf -- '-- +goose Up\n\n-- +goose Down\n' > "$$FILE"; \
-	echo "Created: $$FILE"
+migrate-create: ## Create migration: make migrate-create <domain> <name>
+	go run ./cmd/migrate create $(filter-out $@,$(MAKECMDGOALS))
+
+# Catch-all to swallow positional args passed to migrate-* targets
+%:
+	@:
 
 .DEFAULT_GOAL := help
