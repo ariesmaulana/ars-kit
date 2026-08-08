@@ -43,7 +43,6 @@ type StorageTx interface {
 	// This implements pessimistic locking to prevent concurrent modifications
 	LockUserById(ctx context.Context, id int) (User, StorageErrorType, error)
 
-
 	// Commit commits the transaction
 	Commit() error
 

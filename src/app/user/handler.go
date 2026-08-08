@@ -1,12 +1,18 @@
 package user
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/rs/xid"
+	"github.com/rs/zerolog/log"
 )
 
 // Handler handles HTTP requests for user operations
@@ -29,6 +35,26 @@ func statusForError(code ErrorCode) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+// bindJSON binds the JSON request body into dst, tolerating curl bodies that
+// got line-wrapped when pasted. A raw CR/LF is only legal in JSON as
+// whitespace between tokens, so stripping it never breaks valid JSON — it only
+// repairs the common wrapped-string mistake, e.g.
+//
+//	"full_name":"Jane\nWorkflow" → "full_name":"Jane Workflow"
+func bindJSON(c echo.Context, dst any) error {
+	// Reject non-JSON payloads, mirroring echo's default binder.
+	if !strings.Contains(c.Request().Header.Get(echo.HeaderContentType), "application/json") {
+		return fmt.Errorf("unsupported media type %q", c.Request().Header.Get(echo.HeaderContentType))
+	}
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return err
+	}
+	body = bytes.ReplaceAll(body, []byte{'\r'}, nil)
+	body = bytes.ReplaceAll(body, []byte{'\n'}, nil)
+	return json.Unmarshal(body, dst)
 }
 
 // NewHandler creates a new user handler
@@ -64,6 +90,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	// Public routes
 	public := users.Group("", authLimiter)
 	public.POST("/register", h.Register)
+	public.POST("/register-workflow", h.RegisterWorkflow)
 	public.POST("/login", h.Login)
 	public.POST("/logout", h.Logout)
 
@@ -163,7 +190,8 @@ func (h *Handler) Register(c echo.Context) error {
 	traceID := xid.New().String()
 
 	var req RegisterRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, AuthResponse{
 			Success: false,
 			Message: "Invalid request body",
@@ -206,6 +234,50 @@ func (h *Handler) Register(c echo.Context) error {
 	})
 }
 
+// RegisterWorkflow handles POST /api/v1/users/register-workflow
+// @Summary Register a user asynchronously via the workflow engine
+// @Description Validate the input and enqueue a register_user workflow job.
+// @Description The user is created and granted its permission by background
+// @Description workers instead of synchronously in the request.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body RegisterRequest true "User registration data"
+// @Success 202 {object} AuthResponse
+// @Failure 400 {object} AuthResponse
+// @Failure 500 {object} AuthResponse
+// @Router /api/v1/users/register-workflow [post]
+func (h *Handler) RegisterWorkflow(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req RegisterRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, AuthResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.DemoWorkflow(c.Request().Context(), &DemoWorkflowInput{
+		TraceId:  traceID,
+		Email:    req.Email,
+		Username: req.Username,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusAccepted, AuthResponse{
+		Success: true,
+		Message: "Demo workflow queued",
+	})
+}
+
 // Login handles POST /api/v1/users/login
 // @Summary Login user
 // @Description Authenticate user and return JWT token
@@ -222,7 +294,8 @@ func (h *Handler) Login(c echo.Context) error {
 	traceID := xid.New().String()
 
 	var req LoginRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, AuthResponse{
 			Success: false,
 			Message: "Invalid request body",
@@ -349,7 +422,8 @@ func (h *Handler) UpdateUsername(c echo.Context) error {
 	}
 
 	var req UpdateUsernameRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, UserResponse{
 			Success: false,
 			Message: "Invalid request body",
@@ -403,7 +477,8 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	}
 
 	var req UpdatePasswordRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, UserResponse{
 			Success: false,
 			Message: "Invalid request body",
@@ -468,7 +543,8 @@ func (h *Handler) GrantPermission(c echo.Context) error {
 	}
 
 	var req ManagePermissionRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
 			Success: false,
 			Message: "Invalid request body",
@@ -521,7 +597,8 @@ func (h *Handler) RevokePermission(c echo.Context) error {
 	}
 
 	var req ManagePermissionRequest
-	if err := c.Bind(&req); err != nil {
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
 		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
 			Success: false,
 			Message: "Invalid request body",

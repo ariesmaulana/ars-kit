@@ -434,6 +434,52 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/users/register-workflow": {
+            "post": {
+                "description": "Validate the input and enqueue a register_user workflow job.\nThe user is created and granted its permission by background\nworkers instead of synchronously in the request.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Register a user asynchronously via the workflow engine",
+                "parameters": [
+                    {
+                        "description": "User registration data",
+                        "name": "user",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuthResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuthResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {

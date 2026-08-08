@@ -10,6 +10,7 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 )
 
 // Domain represents a migration domain with its embedded SQL files.
@@ -22,6 +23,7 @@ type Domain struct {
 var All = []Domain{
 	{Name: "user", FS: user.Migrations},
 	{Name: "permission", FS: permission.Migrations},
+	{Name: "workflow", FS: workflow.Migrations},
 }
 
 // UserOnly is a convenience slice for running only user-domain migrations.
@@ -30,7 +32,8 @@ var UserOnly = All[:1]
 // PermissionOnly is a convenience slice for running only permission-domain migrations.
 var PermissionOnly = All[1:2]
 
-
+// WorkflowOnly is a convenience slice for running only workflow-domain migrations.
+var WorkflowOnly = All[2:3]
 
 // Run applies goose migrations for the given domains.
 // The db connection's search_path should already target the desired schema.

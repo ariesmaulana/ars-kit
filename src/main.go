@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	appmw "github.com/ariesmaulana/ars-kit/src/middleware"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -40,6 +43,71 @@ func main() {
 	}
 	defer db.Close()
 
+	app := buildApp(conf, db)
+
+	if len(os.Args) < 2 {
+		usage("")
+		os.Exit(2)
+	}
+
+	switch os.Args[1] {
+	case "serve":
+		serve(conf, app)
+	case "worker":
+		worker(conf, app)
+	default:
+		usage(os.Args[1])
+		os.Exit(2)
+	}
+}
+
+// App holds every constructed service, shared by the serve and worker
+// commands. Adding a module is one field here + one line in buildApp.
+type App struct {
+	WorkflowEngine *workflow.Engine
+
+	UserService user.Service
+	// OtherService other.Service — add app modules here as they appear
+}
+
+// buildApp wires foundation and app modules. Shared by serve and worker so the
+// wiring is written once.
+func buildApp(conf *config.Config, db *database.PostgresDB) *App {
+	//foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
+	permissionStorage := permission.NewStorage(db.Pool)
+	permissionService := permission.NewService(permissionStorage)
+
+	// Workflow engine — PostgreSQL-backed multi-step background jobs. Business
+	// code enqueues jobs through the package-level workflow.Register; the
+	// worker command executes them.
+	workflowEngine := workflow.NewEngine(workflow.NewStore(db.Pool), workflow.Config{
+		Workers:      conf.WorkflowWorkers,
+		PollInterval: time.Duration(conf.WorkflowPollIntervalSec) * time.Second,
+		StaleTimeout: time.Duration(conf.WorkflowStaleTimeoutMin) * time.Minute,
+		DrainTimeout: time.Duration(conf.WorkflowDrainTimeoutSec) * time.Second,
+		BatchSize:    conf.WorkflowBatchSize,
+	})
+
+	// end of foundation module
+
+	// App Modules
+	userStorage := user.NewStorage(db.Pool)
+	userService := user.NewService(userStorage, permissionService)
+
+	// Register workflow definitions that depend on app modules, then install
+	// the engine for the package-level workflow.Register.
+	workflowEngine.Register(workflow.DemoWorkflow(userService))
+	workflow.SetDefault(workflowEngine)
+
+	return &App{
+		WorkflowEngine: workflowEngine,
+		UserService:    userService,
+	}
+}
+
+// serve runs the HTTP server. Business services enqueue workflow jobs here;
+// the worker command executes them.
+func serve(conf *config.Config, app *App) {
 	// Initialize Echo
 	e := echo.New()
 	e.HideBanner = true
@@ -94,17 +162,8 @@ func main() {
 		CookieHTTPOnly:  true,
 	}
 
-	//foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
-	permissionStorage := permission.NewStorage(db.Pool)
-	permissionService := permission.NewService(permissionStorage)
-
-	// end of foundation module
-
-	// App Modules
-	userStorage := user.NewStorage(db.Pool)
-	userService := user.NewService(userStorage, permissionService)
 	jwtService := user.NewJWTService(jwtConfig)
-	userHandler := user.NewHandler(userService, jwtService)
+	userHandler := user.NewHandler(app.UserService, jwtService)
 
 	// API v1 group — pass to each domain handler for clean versioning
 	v1 := e.Group("/api/v1")
@@ -130,9 +189,9 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
+	// Wait for an interrupt or SIGTERM to gracefully shut down the server
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 
 	log.Info().Msg("Shutting down server...")
@@ -146,4 +205,46 @@ func main() {
 	}
 
 	log.Info().Msg("Server exited properly")
+}
+
+// worker runs the workflow engine workers. Jobs enqueued by the serve process
+// (or any other process) are executed here.
+func worker(conf *config.Config, app *App) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		app.WorkflowEngine.Run(ctx)
+		close(done)
+	}()
+
+	log.Info().Int("workers", conf.WorkflowWorkers).Msg("Workflow engine started")
+
+	// Wait for an interrupt or SIGTERM to shut down the engine
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Info().Msg("Shutting down workflow engine...")
+
+	// Workers stop acquiring new jobs, and the in-flight step is allowed to
+	// finish (bounded by DrainTimeout). Anything still 'processing' is
+	// reclaimed by the next deployment's stale logic.
+	cancel()
+	select {
+	case <-done:
+		log.Info().Msg("Workflow engine drained")
+	case <-time.After(time.Duration(conf.WorkflowDrainTimeoutSec) * time.Second):
+		log.Warn().Msg("Workflow engine drain timed out; leaving processing jobs to stale reclaim")
+	}
+
+	log.Info().Msg("Worker exited properly")
+}
+
+func usage(cmd string) {
+	if cmd != "" {
+		fmt.Fprintf(os.Stderr, "ars-kit: unknown command %q\n", cmd)
+	}
+	fmt.Fprintln(os.Stderr, "usage: ars-kit <serve|worker>")
+	fmt.Fprintln(os.Stderr, "  serve   run the HTTP server (enqueues workflow jobs)")
+	fmt.Fprintln(os.Stderr, "  worker  run the workflow engine workers")
 }

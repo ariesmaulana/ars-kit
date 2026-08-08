@@ -164,10 +164,10 @@ func validateHostname(hostname string) error {
 
 	// Check for common typos and invalid patterns
 	invalidPatterns := []string{
-		"..",   // consecutive dots (already checked but double-check)
-		"@",    // should not have @ in domain
-		".@",   // dot before at
-		"@.",   // at before dot
+		"..", // consecutive dots (already checked but double-check)
+		"@",  // should not have @ in domain
+		".@", // dot before at
+		"@.", // at before dot
 	}
 
 	for _, pattern := range invalidPatterns {
@@ -212,4 +212,3 @@ func validateDomainFormat(domain string) error {
 
 	return nil
 }
-

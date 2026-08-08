@@ -1,4 +1,4 @@
-.PHONY: help build build-linux clean test test-verbose run install-deps generate swagger lint migrate-up migrate-down migrate-status migrate-create
+.PHONY: help build build-linux clean test test-verbose run worker install-deps generate swagger lint migrate-up migrate-down migrate-status migrate-create
 
 # Variables
 APP_NAME=ars-kit
@@ -62,8 +62,11 @@ test-coverage: ## Run tests with coverage
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
-run: ## Run the application
-	$(GOCMD) run $(MAIN_PATH)
+run: ## Run the HTTP server (worker runs separately: make worker)
+	$(GOCMD) run $(MAIN_PATH) serve
+
+worker: ## Run the workflow engine workers
+	$(GOCMD) run $(MAIN_PATH) worker
 
 clean: ## Clean build artifacts
 	$(GOCLEAN)

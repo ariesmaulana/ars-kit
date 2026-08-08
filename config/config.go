@@ -30,6 +30,13 @@ type Config struct {
 	DBHealthCheckPeriod int   // Health check interval in seconds (default: 60)
 	DBConnectTimeout    int   // Connection timeout in seconds (default: 5)
 
+	// Workflow engine (PostgreSQL-backed background jobs)
+	WorkflowWorkers         int // Worker goroutines (default: 3)
+	WorkflowPollIntervalSec int // Idle poll delay in seconds (default: 5)
+	WorkflowStaleTimeoutMin int // Processing lock lifetime in minutes (default: 3)
+	WorkflowDrainTimeoutSec int // Shutdown drain wait in seconds (default: 30)
+	WorkflowBatchSize       int // Jobs claimed per poll (default: 5)
+
 	JWTSecret       string
 	CORSAllowOrigin string
 }
@@ -60,17 +67,50 @@ func InitConfig() (*Config, error) {
 	var err error
 
 	cfg.DBMaxConns, err = parseInt32Env("DB_MAX_CONNS", envs, 25)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.DBMinConns, err = parseInt32Env("DB_MIN_CONNS", envs, 5)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.DBMaxConnLifetime, err = parseIntEnv("DB_MAX_CONN_LIFETIME", envs, 60)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.DBMaxConnIdleTime, err = parseIntEnv("DB_MAX_CONN_IDLE_TIME", envs, 30)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.DBHealthCheckPeriod, err = parseIntEnv("DB_HEALTH_CHECK_PERIOD", envs, 60)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.DBConnectTimeout, err = parseIntEnv("DB_CONNECT_TIMEOUT", envs, 5)
-	if err != nil { errs = append(errs, err) }
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	cfg.WorkflowWorkers, err = parseIntEnv("WORKFLOW_WORKERS", envs, 3)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowPollIntervalSec, err = parseIntEnv("WORKFLOW_POLL_INTERVAL", envs, 5)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowStaleTimeoutMin, err = parseIntEnv("WORKFLOW_STALE_TIMEOUT", envs, 5)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowDrainTimeoutSec, err = parseIntEnv("WORKFLOW_DRAIN_TIMEOUT", envs, 30)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowBatchSize, err = parseIntEnv("WORKFLOW_BATCH_SIZE", envs, 5)
+	if err != nil {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)

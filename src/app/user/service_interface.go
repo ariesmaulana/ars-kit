@@ -2,12 +2,27 @@ package user
 
 import (
 	"context"
+
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 )
 
 // Service defines the interface for user business logic
 type Service interface {
 	// Register creates a new user account
 	Register(ctx context.Context, input *RegisterInput) *RegisterOutput
+
+	// DemoWorkflow validates the input and enqueues a demo workflow job
+	// instead of creating the user synchronously. Background workers create
+	// the user and grant it the workflow permission.
+	DemoWorkflow(ctx context.Context, input *DemoWorkflowInput) *DemoWorkflowOutput
+
+	// RegisterUser creates a user account. It is the seam the demo workflow's
+	// RegisterUser step calls.
+	RegisterUser(ctx context.Context, input *workflow.RegisterUserInput) *workflow.RegisterUserOutput
+
+	// GrantPermissionSystem grants a permission without the super-user actor
+	// check. It is the seam the demo workflow's GrantPermission step calls.
+	GrantPermissionSystem(ctx context.Context, input *workflow.GrantPermissionInput) *workflow.GrantPermissionOutput
 
 	// Login authenticates a user
 	Login(ctx context.Context, input *LoginInput) *LoginOutput
@@ -28,6 +43,22 @@ type Service interface {
 	// RevokePermission removes a permission from a target user.
 	// Only a user holding the "<actorId>:super_user" permission may do this.
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+}
+
+// DemoWorkflowInput represents input for the async demo registration. The
+// user is not created synchronously — a demo workflow job is enqueued instead.
+type DemoWorkflowInput struct {
+	TraceId  string
+	Email    string
+	Username string
+}
+
+// DemoWorkflowOutput represents output after enqueuing the demo workflow.
+type DemoWorkflowOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 // ErrorCode categorizes why an operation failed so adapters can map it to an
