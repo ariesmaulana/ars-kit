@@ -86,7 +86,7 @@ func TestValidateEmail(t *testing.T) {
 			name:        "Missing @ symbol",
 			email:       "userexample.com",
 			shouldError: true,
-			errorMsg:    "email must contain @ symbol",
+			errorMsg:    "email must contain exactly one @ symbol",
 		},
 
 		// Invalid emails - Multiple @ symbols

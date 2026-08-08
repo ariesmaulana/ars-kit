@@ -41,8 +41,8 @@ package todo_test
 import (
 	"testing"
 
-	"github.com/ariesmaulana/monthly-expense/src/app/todo"
-	testsuite "github.com/ariesmaulana/monthly-expense/testing"
+	"github.com/ariesmaulana/ars-kit/src/app/todo"
+	testsuite "github.com/ariesmaulana/ars-kit/testing"
 )
 
 // TodoApp holds the initialized todo application components
@@ -88,7 +88,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ariesmaulana/monthly-expense/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 )
@@ -159,7 +159,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ariesmaulana/monthly-expense/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/stretchr/testify/assert"
 )
 

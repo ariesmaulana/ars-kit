@@ -34,15 +34,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	dsn := database.DSN(cfg)
+	// Resolve schema for logging and Run()
 	schema := cfg.DBSchema
 	if schema == "" {
 		schema = "public"
 	}
-
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
-		cfg.DBUser, cfg.DBPass, cfg.DBHost, cfg.DBPort, cfg.DBName, schema,
-	)
 
 	fmt.Printf("[migrate] Connecting to database: %s:%s/%s (schema: %s)\n", cfg.DBHost, cfg.DBPort, cfg.DBName, schema)
 

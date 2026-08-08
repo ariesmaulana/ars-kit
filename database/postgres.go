@@ -16,21 +16,12 @@ type PostgresDB struct {
 
 // NewPostgresDB creates a new PostgreSQL connection pool with best practices
 func NewPostgresDB(cfg *config.Config) (*PostgresDB, error) {
-	// Set schema to public if not provided
+	dsn := DSN(cfg)
+	// Resolve schema for logging
 	schema := cfg.DBSchema
 	if schema == "" {
 		schema = "public"
 	}
-
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
-		cfg.DBUser,
-		cfg.DBPass,
-		cfg.DBHost,
-		cfg.DBPort,
-		cfg.DBName,
-		schema,
-	)
 
 	// Parse the connection string and configure pool settings
 	poolConfig, err := pgxpool.ParseConfig(dsn)

@@ -11,7 +11,7 @@ func InitTestConfig() *config.Config {
 	if err != nil {
 		// Fallback to defaults for testing
 		cfg = &config.Config{
-			AppName:  "MonthlyExpense",
+			AppName:  "ars-kit",
 			AppEnv:   "test",
 			Port:     "8080",
 			DBHost:   "localhost",

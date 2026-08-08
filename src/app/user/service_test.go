@@ -2,9 +2,12 @@ package user_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -468,14 +471,16 @@ func TestUserUpdateUsername(t *testing.T) {
 				newUsername string
 			}
 			type expected struct {
-				success bool
-				message string
+				success           bool
+				message           string
+				expectedCountMock int
 			}
 
 			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
 			}
 
 			suite.Setup(func(ctx context.Context, app *UserApp) {
@@ -506,6 +511,15 @@ func TestUserUpdateUsername(t *testing.T) {
 			runtest := func(t *testing.T, app *UserApp, r *testRow) {
 				ctx := context.Background()
 
+				counter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.userID, input.UserID, r.name)
+					assert.Equal(t, fmt.Sprintf("%d:user:profile_update", r.input.userID), input.Permission, r.name)
+					counter.Inc()
+					return r.permissionCheck
+				}
+
 				initialUsers := app.Helper.GetAllUsers(ctx, t)
 
 				output := app.Service.UpdateUsername(ctx, &user.UpdateUsernameInput{
@@ -518,6 +532,7 @@ func TestUserUpdateUsername(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - permission check call count")
 
 				if r.expected.success == false {
 					// Verify no users were modified
@@ -567,9 +582,11 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "newusername1",
 						},
 						expected: &expected{
-							success: true,
-							message: "Username updated successfully",
+							success:           true,
+							message:           "Username updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 					{
 						name: "Should update username to minimum length (5 characters)",
@@ -578,9 +595,11 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "user5",
 						},
 						expected: &expected{
-							success: true,
-							message: "Username updated successfully",
+							success:           true,
+							message:           "Username updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 					{
 						name: "Should update username to long name",
@@ -589,9 +608,11 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "verylongusername12345",
 						},
 						expected: &expected{
-							success: true,
-							message: "Username updated successfully",
+							success:           true,
+							message:           "Username updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 
 					// ===== Validation Tests: NewUsername =====
@@ -602,8 +623,9 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "",
 						},
 						expected: &expected{
-							success: false,
-							message: "New username is mandatory",
+							success:           false,
+							message:           "New username is mandatory",
+							expectedCountMock: 0,
 						},
 					},
 					{
@@ -613,8 +635,9 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "user",
 						},
 						expected: &expected{
-							success: false,
-							message: "Username must be at least 5 characters long",
+							success:           false,
+							message:           "Username must be at least 5 characters long",
+							expectedCountMock: 0,
 						},
 					},
 					{
@@ -624,8 +647,9 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "abc",
 						},
 						expected: &expected{
-							success: false,
-							message: "Username must be at least 5 characters long",
+							success:           false,
+							message:           "Username must be at least 5 characters long",
+							expectedCountMock: 0,
 						},
 					},
 
@@ -637,9 +661,39 @@ func TestUserUpdateUsername(t *testing.T) {
 							newUsername: "validusername",
 						},
 						expected: &expected{
-							success: false,
-							message: "No Username Found",
+							success:           false,
+							message:           "No Username Found",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+
+					// ===== Permission Tests =====
+					{
+						name: "Should fail when user does not hold profile_update permission",
+						input: &input{
+							userID:      Users[0].Id,
+							newUsername: "validusername",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update profile",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+					{
+						name: "Should fail when permission module cannot confirm the check",
+						input: &input{
+							userID:      Users[0].Id,
+							newUsername: "validusername",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update profile",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createFailedPermissionCheck(),
 					},
 				})
 			})
@@ -660,14 +714,16 @@ func TestUserUpdatePassword(t *testing.T) {
 				newPassword string
 			}
 			type expected struct {
-				success bool
-				message string
+				success           bool
+				message           string
+				expectedCountMock int
 			}
 
 			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
 			}
 
 			suite.Setup(func(ctx context.Context, app *UserApp) {
@@ -698,6 +754,15 @@ func TestUserUpdatePassword(t *testing.T) {
 			runtest := func(t *testing.T, app *UserApp, r *testRow) {
 				ctx := context.Background()
 
+				counter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.userID, input.UserID, r.name)
+					assert.Equal(t, fmt.Sprintf("%d:user:password_update", r.input.userID), input.Permission, r.name)
+					counter.Inc()
+					return r.permissionCheck
+				}
+
 				initialUsers := app.Helper.GetAllUsers(ctx, t)
 
 				output := app.Service.UpdatePassword(ctx, &user.UpdatePasswordInput{
@@ -711,6 +776,7 @@ func TestUserUpdatePassword(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - permission check call count")
 
 				if r.expected.success == false {
 					// Verify no users were modified
@@ -759,9 +825,11 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "newpass123",
 						},
 						expected: &expected{
-							success: true,
-							message: "Password updated successfully",
+							success:           true,
+							message:           "Password updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 					{
 						name: "Should update password to minimum length (7 characters)",
@@ -771,9 +839,11 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "pass123",
 						},
 						expected: &expected{
-							success: true,
-							message: "Password updated successfully",
+							success:           true,
+							message:           "Password updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 					{
 						name: "Should update password to long password",
@@ -783,9 +853,11 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "verylongpassword12345",
 						},
 						expected: &expected{
-							success: true,
-							message: "Password updated successfully",
+							success:           true,
+							message:           "Password updated successfully",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 
 					// ===== Validation Tests: OldPassword =====
@@ -797,8 +869,9 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "newpass123",
 						},
 						expected: &expected{
-							success: false,
-							message: "Old password is mandatory",
+							success:           false,
+							message:           "Old password is mandatory",
+							expectedCountMock: 0,
 						},
 					},
 					{
@@ -809,9 +882,11 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "newpass123",
 						},
 						expected: &expected{
-							success: false,
-							message: "Invalid old password",
+							success:           false,
+							message:           "Invalid old password",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 
 					// ===== Validation Tests: NewPassword =====
@@ -823,8 +898,9 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "",
 						},
 						expected: &expected{
-							success: false,
-							message: "New password is mandatory",
+							success:           false,
+							message:           "New password is mandatory",
+							expectedCountMock: 0,
 						},
 					},
 					{
@@ -835,8 +911,9 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "pass12",
 						},
 						expected: &expected{
-							success: false,
-							message: "Password must be at least 7 characters long",
+							success:           false,
+							message:           "Password must be at least 7 characters long",
+							expectedCountMock: 0,
 						},
 					},
 					{
@@ -847,8 +924,9 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "abc",
 						},
 						expected: &expected{
-							success: false,
-							message: "Password must be at least 7 characters long",
+							success:           false,
+							message:           "Password must be at least 7 characters long",
+							expectedCountMock: 0,
 						},
 					},
 
@@ -861,9 +939,41 @@ func TestUserUpdatePassword(t *testing.T) {
 							newPassword: "newpass123",
 						},
 						expected: &expected{
-							success: false,
-							message: "User not found",
+							success:           false,
+							message:           "User not found",
+							expectedCountMock: 1,
 						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+
+					// ===== Permission Tests =====
+					{
+						name: "Should fail when user does not hold password_update permission",
+						input: &input{
+							userID:      Users[0].Id,
+							oldPassword: "password123",
+							newPassword: "newpass123",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update password",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+					{
+						name: "Should fail when permission module cannot confirm the check",
+						input: &input{
+							userID:      Users[0].Id,
+							oldPassword: "password123",
+							newPassword: "newpass123",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update password",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createFailedPermissionCheck(),
 					},
 				})
 			})
@@ -1032,43 +1142,47 @@ func TestUserGetProfileById(t *testing.T) {
 	})
 }
 
-func TestUserAddMember(t *testing.T) {
+func TestUserGrantPermission(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "User AddMember", func() {
+		suite.Describe(t, "User GrantPermission", func() {
 
 			var Users []DataUser
 
 			type input struct {
-				userID        int
-				name          string
-				monthlyIncome int
+				traceId      string
+				actorId      int
+				targetUserId int
+				permission   string
 			}
 			type expected struct {
-				success       bool
-				message       string
-				memberCreated bool
+				success           bool
+				message           string
+				expectedCountMock int
+				grantCalls        int
 			}
 
 			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+				grantOutput     *permission.GrantPermissionOutput
 			}
 
 			suite.Setup(func(ctx context.Context, app *UserApp) {
 				Users = []DataUser{
 					{
 						Idx:      0,
-						Username: "testuser1",
-						Email:    "test1@example.com",
-						FullName: "Test User 1",
+						Username: "actoruser",
+						Email:    "actor@example.com",
+						FullName: "Actor User",
 						Password: "password123",
 					},
 					{
 						Idx:      1,
-						Username: "testuser2",
-						Email:    "test2@example.com",
-						FullName: "Test User 2",
+						Username: "targetuser",
+						Email:    "target@example.com",
+						FullName: "Target User",
 						Password: "password123",
 					},
 				}
@@ -1083,1056 +1197,47 @@ func TestUserAddMember(t *testing.T) {
 			runtest := func(t *testing.T, app *UserApp, r *testRow) {
 				ctx := context.Background()
 
-				initialMembers := app.Helper.GetAllMembers(ctx, t)
-
-				output := app.Service.AddMember(ctx, &user.AddMemberInput{
-					TraceId:       "trace-test",
-					Id:            r.input.userID,
-					Name:          r.input.name,
-					MonthlyIncome: r.input.monthlyIncome,
-				})
-
-				afterMembers := app.Helper.GetAllMembers(ctx, t)
-
-				assert.Equal(t, r.expected.success, output.Success, r.name)
-				assert.Equal(t, r.expected.message, output.Message, r.name)
-
-				if r.expected.success == false {
-					// Verify no members were created
-					assert.Equal(t, initialMembers, afterMembers, r.name)
-					return
-				}
-
-				// For successful member addition
-				assert.Equal(t, len(initialMembers)+1, len(afterMembers), r.name)
-
-				// The output now contains only the created member
-				foundMember := output.Member
-				assert.NotZero(t, foundMember.Id, r.name)
-				assert.Equal(t, r.input.userID, foundMember.UserId, r.name)
-				assert.Equal(t, r.input.name, foundMember.Name, r.name)
-				assert.Equal(t, r.input.monthlyIncome, foundMember.MonthlyIncome, r.name)
-				assert.NotZero(t, foundMember.CreatedAt, r.name)
-				assert.NotZero(t, foundMember.UpdatedAt, r.name)
-
-				// Verify the newly added member exists in afterMembers map
-				addedMember, exists := afterMembers[foundMember.Id]
-				assert.True(t, exists, r.name+" - member should exist in afterMembers")
-				assert.Equal(t, r.input.name, addedMember.Name, r.name)
-
-				// Add the new member to initial members map to reflect expected changes
-				initialMembers[foundMember.Id] = addedMember
-
-				// Verify all other members remain unchanged
-				assert.Equal(t, initialMembers, afterMembers, r.name+" - only the new member should be added")
-			}
-
-			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
-				for _, r := range rows {
-					runtest(t, app, r)
-				}
-			}
-
-			suite.Run(t, "AddMember scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
-				runRows(t, app, []*testRow{
-					// ===== Success Tests =====
-					{
-						name: "Should add member successfully with valid inputs",
-						input: &input{
-							userID:        Users[0].Id,
-							name:          "John Doe",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member added successfully",
-							memberCreated: true,
-						},
-					},
-					{
-						name: "Should add member with minimum name length (2 characters)",
-						input: &input{
-							userID:        Users[0].Id,
-							name:          "Jo",
-							monthlyIncome: 3000000,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member added successfully",
-							memberCreated: true,
-						},
-					},
-					{
-						name: "Should add member with zero monthly income",
-						input: &input{
-							userID:        Users[0].Id,
-							name:          "Jane Doe",
-							monthlyIncome: 0,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member added successfully",
-							memberCreated: true,
-						},
-					},
-					{
-						name: "Should add member with long name",
-						input: &input{
-							userID:        Users[1].Id,
-							name:          "Very Long Member Name For Testing",
-							monthlyIncome: 10000000,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member added successfully",
-							memberCreated: true,
-						},
-					},
-					{
-						name: "Should add multiple members to same user",
-						input: &input{
-							userID:        Users[1].Id,
-							name:          "Second Member",
-							monthlyIncome: 7500000,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member added successfully",
-							memberCreated: true,
-						},
-					},
-
-					// ===== Validation Tests: Name =====
-					{
-						name: "Should fail when name is empty",
-						input: &input{
-							userID:        Users[0].Id,
-							name:          "",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success:       false,
-							message:       "Member name is mandatory",
-							memberCreated: false,
-						},
-					},
-					{
-						name: "Should fail when name is too short (1 character)",
-						input: &input{
-							userID:        Users[0].Id,
-							name:          "A",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success:       false,
-							message:       "Member name must be at least 2 characters long",
-							memberCreated: false,
-						},
-					},
-
-					// ===== Validation Tests: User ID =====
-					{
-						name: "Should fail when user does not exist",
-						input: &input{
-							userID:        99999,
-							name:          "John Doe",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success:       false,
-							message:       "User not found",
-							memberCreated: false,
-						},
-					},
-				})
-			})
-
-		})
-	})
-}
-
-func TestUserGetMemberById(t *testing.T) {
-	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "User GetMemberById", func() {
-
-			var Users []DataUser
-			var Members []DataMember
-
-			type input struct {
-				memberID int
-			}
-			type expected struct {
-				success       bool
-				message       string
-				memberID      int
-				userID        int
-				name          string
-				monthlyIncome int
-			}
-
-			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
-			}
-
-			suite.Setup(func(ctx context.Context, app *UserApp) {
-				Users = []DataUser{
-					{
-						Idx:      0,
-						Username: "testuser1",
-						Email:    "test1@example.com",
-						FullName: "Test User 1",
-						Password: "password123",
-					},
-					{
-						Idx:      1,
-						Username: "testuser2",
-						Email:    "test2@example.com",
-						FullName: "Test User 2",
-						Password: "password123",
-					},
-				}
-
-				// Insert users and store actual database IDs
-				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
-					Users[i].Id = insertedUser.Id // Store actual database ID
-				}
-
-				Members = []DataMember{
-					{
-						Idx:           0,
-						UserId:        Users[0].Id,
-						Name:          "John Doe",
-						MonthlyIncome: 5000000,
-					},
-					{
-						Idx:           1,
-						UserId:        Users[0].Id,
-						Name:          "Jane Doe",
-						MonthlyIncome: 3000000,
-					},
-					{
-						Idx:           2,
-						UserId:        Users[1].Id,
-						Name:          "Bob Smith",
-						MonthlyIncome: 7000000,
-					},
-				}
-
-				// Insert members and store actual database IDs
-				for i, memberData := range Members {
-					insertedMember := app.Helper.InsertMember(ctx, t, memberData.UserId, memberData.Name, memberData.MonthlyIncome)
-					Members[i].Id = insertedMember.Id // Store actual database ID
-				}
-			})
-
-			runtest := func(t *testing.T, app *UserApp, r *testRow) {
-				ctx := context.Background()
-
-				initialMembers := app.Helper.GetAllMembers(ctx, t)
-
-				output := app.Service.GetMemberById(ctx, &user.GetMemberByIdInput{
-					TraceId:  "trace-test",
-					MemberId: r.input.memberID,
-				})
-
-				afterMembers := app.Helper.GetAllMembers(ctx, t)
-
-				assert.Equal(t, r.expected.success, output.Success, r.name)
-				assert.Equal(t, r.expected.message, output.Message, r.name)
-
-				if r.expected.success == false {
-					// Verify no members were modified (read operation should not change anything)
-					assert.Equal(t, initialMembers, afterMembers, r.name)
-					return
-				}
-
-				// For successful retrieval
-				assert.Equal(t, len(initialMembers), len(afterMembers), r.name)
-				assert.NotZero(t, output.Member.Id, r.name)
-				assert.Equal(t, r.expected.memberID, output.Member.Id, r.name)
-				assert.Equal(t, r.expected.userID, output.Member.UserId, r.name)
-				assert.Equal(t, r.expected.name, output.Member.Name, r.name)
-				assert.Equal(t, r.expected.monthlyIncome, output.Member.MonthlyIncome, r.name)
-				assert.NotZero(t, output.Member.CreatedAt, r.name)
-				assert.NotZero(t, output.Member.UpdatedAt, r.name)
-
-				// Verify no members were modified (read operation should not change anything)
-				assert.Equal(t, initialMembers, afterMembers, r.name)
-			}
-
-			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
-				for _, r := range rows {
-					runtest(t, app, r)
-				}
-			}
-
-			suite.Run(t, "GetMemberById scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
-				runRows(t, app, []*testRow{
-					// ===== Success Tests =====
-					{
-						name: "Should get member successfully for first member",
-						input: &input{
-							memberID: Members[0].Id,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member retrieved successfully",
-							memberID:      Members[0].Id,
-							userID:        Users[0].Id,
-							name:          "John Doe",
-							monthlyIncome: 5000000,
-						},
-					},
-					{
-						name: "Should get member successfully for second member",
-						input: &input{
-							memberID: Members[1].Id,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member retrieved successfully",
-							memberID:      Members[1].Id,
-							userID:        Users[0].Id,
-							name:          "Jane Doe",
-							monthlyIncome: 3000000,
-						},
-					},
-					{
-						name: "Should get member successfully for third member",
-						input: &input{
-							memberID: Members[2].Id,
-						},
-						expected: &expected{
-							success:       true,
-							message:       "Member retrieved successfully",
-							memberID:      Members[2].Id,
-							userID:        Users[1].Id,
-							name:          "Bob Smith",
-							monthlyIncome: 7000000,
-						},
-					},
-
-					// ===== Validation Tests: Member ID =====
-					{
-						name: "Should fail when member does not exist",
-						input: &input{
-							memberID: 99999,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member not found",
-						},
-					},
-					{
-						name: "Should fail when member ID is zero",
-						input: &input{
-							memberID: 0,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member ID is mandatory",
-						},
-					},
-					{
-						name: "Should fail when member ID is negative",
-						input: &input{
-							memberID: -1,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member not found",
-						},
-					},
-				})
-			})
-
-		})
-	})
-}
-
-func TestGetMembersByUserId(t *testing.T) {
-	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "Get Members By User ID", func() {
-
-			type input struct {
-				userID int
-			}
-			type expected struct {
-				success      bool
-				message      string
-				membersCount int
-				memberIDs    []int
-			}
-
-			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
-			}
-
-			var Users []DataUser
-			var Members []DataMember
-
-			suite.Setup(func(ctx context.Context, app *UserApp) {
-				// Setup test data
-				Users = []DataUser{
-					{
-						Idx:      0,
-						Username: "user1",
-						Email:    "user1@test.com",
-						FullName: "User One",
-						Password: "password123",
-					},
-					{
-						Idx:      1,
-						Username: "user2",
-						Email:    "user2@test.com",
-						FullName: "User Two",
-						Password: "password123",
-					},
-					{
-						Idx:      2,
-						Username: "user3",
-						Email:    "user3@test.com",
-						FullName: "User Three",
-						Password: "password123",
-					},
-				}
-
-				// Insert users and store actual database IDs
-				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUser(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
-					Users[i].Id = insertedUser.Id // Store actual database ID
-				}
-
-				Members = []DataMember{
-					{
-						Idx:           0,
-						UserId:        Users[0].Id,
-						Name:          "John Doe",
-						MonthlyIncome: 5000000,
-					},
-					{
-						Idx:           1,
-						UserId:        Users[0].Id,
-						Name:          "Jane Doe",
-						MonthlyIncome: 3000000,
-					},
-					{
-						Idx:           2,
-						UserId:        Users[1].Id,
-						Name:          "Bob Smith",
-						MonthlyIncome: 7000000,
-					},
-				}
-
-				// Insert members and store actual database IDs
-				for i, memberData := range Members {
-					insertedMember := app.Helper.InsertMember(ctx, t, memberData.UserId, memberData.Name, memberData.MonthlyIncome)
-					Members[i].Id = insertedMember.Id // Store actual database ID
-				}
-			})
-
-			runtest := func(t *testing.T, app *UserApp, r *testRow) {
-				ctx := context.Background()
-
-				initialMembers := app.Helper.GetAllMembers(ctx, t)
-
-				output := app.Service.GetMembersByUserId(ctx, &user.GetMembersByUserIdInput{
-					TraceId: "trace-test",
-					UserId:  r.input.userID,
-				})
-
-				afterMembers := app.Helper.GetAllMembers(ctx, t)
-
-				assert.Equal(t, r.expected.success, output.Success, r.name)
-				assert.Equal(t, r.expected.message, output.Message, r.name)
-
-				if r.expected.success == false {
-					// Verify no members were modified (read operation should not change anything)
-					assert.Equal(t, initialMembers, afterMembers, r.name)
-					return
-				}
-
-				// For successful retrieval
-				assert.Equal(t, len(initialMembers), len(afterMembers), r.name)
-				assert.Equal(t, r.expected.membersCount, len(output.Members), r.name)
-
-				// Verify all expected member IDs are present
-				foundMemberIds := make([]int, 0, len(output.Members))
-				for _, member := range output.Members {
-					foundMemberIds = append(foundMemberIds, member.Id)
-					assert.NotZero(t, member.Id, r.name)
-					assert.Equal(t, r.input.userID, member.UserId, r.name)
-					assert.NotEmpty(t, member.Name, r.name)
-					assert.NotZero(t, member.MonthlyIncome, r.name)
-					assert.NotZero(t, member.CreatedAt, r.name)
-					assert.NotZero(t, member.UpdatedAt, r.name)
-				}
-
-				// Verify expected member IDs match
-				if len(r.expected.memberIDs) > 0 {
-					assert.ElementsMatch(t, r.expected.memberIDs, foundMemberIds, r.name)
-				}
-
-				// Verify no members were modified (read operation should not change anything)
-				assert.Equal(t, initialMembers, afterMembers, r.name)
-			}
-
-			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
-				for _, r := range rows {
-					runtest(t, app, r)
-				}
-			}
-
-			suite.Run(t, "GetMembersByUserId scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
-				runRows(t, app, []*testRow{
-					// ===== Success Tests =====
-					{
-						name: "Should get multiple members for user with two members",
-						input: &input{
-							userID: Users[0].Id,
-						},
-						expected: &expected{
-							success:      true,
-							message:      "Member retrieved successfully",
-							membersCount: 2,
-							memberIDs:    []int{Members[0].Id, Members[1].Id},
-						},
-					},
-					{
-						name: "Should get single member for user with one member",
-						input: &input{
-							userID: Users[1].Id,
-						},
-						expected: &expected{
-							success:      true,
-							message:      "Member retrieved successfully",
-							membersCount: 1,
-							memberIDs:    []int{Members[2].Id},
-						},
-					},
-					{
-						name: "Should get empty list for user with no members",
-						input: &input{
-							userID: Users[2].Id,
-						},
-						expected: &expected{
-							success:      true,
-							message:      "Member retrieved successfully",
-							membersCount: 0,
-							memberIDs:    []int{},
-						},
-					},
-
-					// ===== Validation Tests: User ID =====
-					{
-						name: "Should fail when user does not exist",
-						input: &input{
-							userID: 99999,
-						},
-						expected: &expected{
-							success: false,
-							message: "User not found",
-						},
-					},
-					{
-						name: "Should fail when user ID is zero",
-						input: &input{
-							userID: 0,
-						},
-						expected: &expected{
-							success: false,
-							message: "User ID is mandatory",
-						},
-					},
-					{
-						name: "Should fail when user ID is negative",
-						input: &input{
-							userID: -1,
-						},
-						expected: &expected{
-							success: false,
-							message: "User not found",
-						},
-					},
-				})
-			})
-
-		})
-	})
-}
-
-func TestUserUpdateMemberInfo(t *testing.T) {
-	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "User UpdateMemberInfo", func() {
-
-			var Users []DataUser
-			var Members []DataMember
-
-			type input struct {
-				requesterID   int
-				memberID      int
-				name          string
-				monthlyIncome int
-			}
-			type expected struct {
-				success bool
-				message string
-			}
-
-			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
-			}
-
-			suite.Setup(func(ctx context.Context, app *UserApp) {
-				Users = []DataUser{
-					{
-						Idx:      0,
-						Username: "testuser1",
-						Email:    "test1@example.com",
-						FullName: "Test User 1",
-						Password: "password123",
-					},
-					{
-						Idx:      1,
-						Username: "testuser2",
-						Email:    "test2@example.com",
-						FullName: "Test User 2",
-						Password: "password123",
-					},
-				}
-
-				// Insert users and store actual database IDs
-				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
-					Users[i].Id = insertedUser.Id // Store actual database ID
-				}
-
-				Members = []DataMember{
-					{
-						Idx:           0,
-						UserId:        Users[0].Id,
-						Name:          "John Doe",
-						MonthlyIncome: 5000000,
-					},
-					{
-						Idx:           1,
-						UserId:        Users[0].Id,
-						Name:          "Jane Doe",
-						MonthlyIncome: 3000000,
-					},
-					{
-						Idx:           2,
-						UserId:        Users[1].Id,
-						Name:          "Bob Smith",
-						MonthlyIncome: 7000000,
-					},
-				}
-
-				// Insert members and store actual database IDs
-				for i, memberData := range Members {
-					insertedMember := app.Helper.InsertMember(ctx, t, memberData.UserId, memberData.Name, memberData.MonthlyIncome)
-					Members[i].Id = insertedMember.Id // Store actual database ID
-				}
-			})
-
-			runtest := func(t *testing.T, app *UserApp, r *testRow) {
-				ctx := context.Background()
-
-				initialMembers := app.Helper.GetAllMembers(ctx, t)
-
-				output := app.Service.UpdateMemberInfo(ctx, &user.UpdateMemberInfoInput{
-					TraceId:       "trace-test",
-					RequesterId:   r.input.requesterID,
-					Id:            r.input.memberID,
-					Name:          r.input.name,
-					MonthlyIncome: r.input.monthlyIncome,
-				})
-
-				afterMembers := app.Helper.GetAllMembers(ctx, t)
-
-				assert.Equal(t, r.expected.success, output.Success, r.name)
-				assert.Equal(t, r.expected.message, output.Message, r.name)
-
-				if r.expected.success == false {
-					// Verify no members were modified
-					assert.Equal(t, initialMembers, afterMembers, r.name)
-					return
-				}
-
-				// For successful update
-				assert.Equal(t, len(initialMembers), len(afterMembers), r.name)
-
-				// Verify the member info was actually updated in afterMembers map
-				updatedMember, exists := afterMembers[r.input.memberID]
-				assert.True(t, exists, r.name+" - member should exist in afterMembers")
-				assert.Equal(t, r.input.name, updatedMember.Name, r.name)
-				assert.Equal(t, r.input.monthlyIncome, updatedMember.MonthlyIncome, r.name)
-
-				// Update the initial members map to reflect the expected changes
-				// (Name, MonthlyIncome and UpdatedAt will change for the target member)
-				if initialMember, exists := initialMembers[r.input.memberID]; exists {
-					initialMember.Name = r.input.name
-					initialMember.MonthlyIncome = r.input.monthlyIncome
-					initialMember.UpdatedAt = updatedMember.UpdatedAt
-					initialMembers[r.input.memberID] = initialMember
-				}
-
-				// Verify all other members remain unchanged
-				assert.Equal(t, initialMembers, afterMembers, r.name+" - only the target member should be modified")
-			}
-
-			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
-				for _, r := range rows {
-					runtest(t, app, r)
-				}
-			}
-
-			suite.Run(t, "UpdateMemberInfo scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
-				runRows(t, app, []*testRow{
-					// ===== Success Tests =====
-					{
-						name: "Should update member info successfully",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[0].Id,
-							name:          "John Updated",
-							monthlyIncome: 6000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update only name",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[0].Id,
-							name:          "John Smith",
-							monthlyIncome: 6000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update only monthly income",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[1].Id,
-							name:          "Jane Doe",
-							monthlyIncome: 4000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update member info to zero income",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[1].Id,
-							name:          "Jane Doe Updated",
-							monthlyIncome: 0,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update member info to large amount",
-						input: &input{
-							requesterID:   Users[1].Id,
-							memberID:      Members[2].Id,
-							name:          "Bob Johnson",
-							monthlyIncome: 100000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update same member multiple times",
-						input: &input{
-							requesterID:   Users[1].Id,
-							memberID:      Members[2].Id,
-							name:          "Robert Johnson",
-							monthlyIncome: 50000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-					{
-						name: "Should update with minimum name length (2 characters)",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[0].Id,
-							name:          "Jo",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: true,
-							message: "Member info updated successfully",
-						},
-					},
-
-					// ===== Validation Tests: Name =====
-					{
-						name: "Should fail when name is empty",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[0].Id,
-							name:          "",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member name is mandatory",
-						},
-					},
-					{
-						name: "Should fail when name is too short (1 character)",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[1].Id,
-							name:          "A",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member name must be at least 2 characters long",
-						},
-					},
-
-					// ===== Validation Tests: Monthly Income =====
-					{
-						name: "Should fail when monthly income is negative",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[0].Id,
-							name:          "John Doe",
-							monthlyIncome: -1000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Monthly income cannot be negative",
-						},
-					},
-					{
-						name: "Should fail when monthly income is negative (-1)",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      Members[1].Id,
-							name:          "Jane Doe",
-							monthlyIncome: -1,
-						},
-						expected: &expected{
-							success: false,
-							message: "Monthly income cannot be negative",
-						},
-					},
-
-					// ===== Validation Tests: Requester ID =====
-					{
-						name: "Should fail when requester ID is zero",
-						input: &input{
-							requesterID:   0,
-							memberID:      Members[0].Id,
-							name:          "John Doe",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Requester ID is mandatory",
-						},
-					},
-					{
-						name: "Should fail when requester is not the member owner",
-						input: &input{
-							requesterID:   Users[1].Id,
-							memberID:      Members[0].Id,
-							name:          "Unauthorized Update",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Unauthorized update",
-						},
-					},
-
-					// ===== Validation Tests: Member ID =====
-					{
-						name: "Should fail when member does not exist",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      99999,
-							name:          "Non Existent",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member not found",
-						},
-					},
-					{
-						name: "Should fail when member ID is zero",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      0,
-							name:          "Zero ID",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member ID is mandatory",
-						},
-					},
-					{
-						name: "Should fail when member ID is negative",
-						input: &input{
-							requesterID:   Users[0].Id,
-							memberID:      -1,
-							name:          "Negative ID",
-							monthlyIncome: 5000000,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member not found",
-						},
-					},
-				})
-			})
-
-		})
-	})
-}
-
-func TestUserDeleteMember(t *testing.T) {
-	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "User DeleteMember", func() {
-
-			var Users []DataUser
-			var Members []DataMember
-
-			type input struct {
-				requesterID int
-				memberID    int
-			}
-			type expected struct {
-				success bool
-				noOp    bool
-				message string
-			}
-
-			type testRow struct {
-				name     string
-				input    *input
-				expected *expected
-			}
-
-			suite.Setup(func(ctx context.Context, app *UserApp) {
-				Users = []DataUser{
-					{
-						Idx:      0,
-						Username: "testuser1",
-						Email:    "test1@example.com",
-						FullName: "Test User 1",
-						Password: "password123",
-					},
-					{
-						Idx:      1,
-						Username: "testuser2",
-						Email:    "test2@example.com",
-						FullName: "Test User 2",
-						Password: "password123",
-					},
-				}
-
-				// Insert users and store actual database IDs
-				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
-					Users[i].Id = insertedUser.Id
-				}
-
-				Members = []DataMember{
-					{
-						Idx:           0,
-						UserId:        Users[0].Id,
-						Name:          "John Doe",
-						MonthlyIncome: 5000000,
-					},
-					{
-						Idx:           1,
-						UserId:        Users[0].Id,
-						Name:          "Jane Doe",
-						MonthlyIncome: 3000000,
-					},
-					{
-						Idx:           2,
-						UserId:        Users[1].Id,
-						Name:          "Bob Smith",
-						MonthlyIncome: 7000000,
-					},
-				}
-
-				// Insert members and store actual database IDs
-				for i, memberData := range Members {
-					insertedMember := app.Helper.InsertMember(ctx, t, memberData.UserId, memberData.Name, memberData.MonthlyIncome)
-					Members[i].Id = insertedMember.Id
-				}
-			})
-
-			runtest := func(t *testing.T, app *UserApp, r *testRow) {
-				ctx := context.Background()
-
-				initialMembers := app.Helper.GetAllMembers(ctx, t)
-
-				output := app.Service.DeleteMember(ctx, &user.DeleteMemberInput{
-					TraceId:     "trace-test",
-					RequesterId: r.input.requesterID,
-					Id:          r.input.memberID,
-				})
-
-				afterMembers := app.Helper.GetAllMembers(ctx, t)
-
-				assert.Equal(t, r.expected.success, output.Success, r.name)
-				assert.Equal(t, r.expected.message, output.Message, r.name)
-
-				if r.expected.success == false || r.expected.noOp {
-					// Verify no members were deleted
-					assert.Equal(t, initialMembers, afterMembers, r.name)
-					return
-				}
-
-				// Member existed and should now be deleted
-				assert.Equal(t, len(initialMembers)-1, len(afterMembers), r.name)
-
-				// Verify the member no longer exists
-				_, exists := afterMembers[r.input.memberID]
-				assert.False(t, exists, r.name+" - member should not exist after deletion")
-
-				// Verify all other members remain unchanged
-				for id, initialMember := range initialMembers {
-					if id == r.input.memberID {
-						continue
+				counter := &testsuite.Counter{}
+				grantCounter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.actorId, input.UserID, r.name)
+					assert.Equal(t, fmt.Sprintf("%d:super_user", r.input.actorId), input.Permission, r.name)
+					counter.Inc()
+					if r.permissionCheck != nil {
+						return r.permissionCheck
 					}
-					afterMember, exists := afterMembers[id]
-					assert.True(t, exists, r.name+" - other members should still exist")
-					assert.Equal(t, initialMember, afterMember, r.name+" - other members should be unchanged")
+					return createFailedPermissionCheck()
 				}
+
+				app.PermissionSvcMock.GrantPermissionStub = func(ctx context.Context, input *permission.GrantPermissionInput) *permission.GrantPermissionOutput {
+					assert.Equal(t, r.input.targetUserId, input.UserID, r.name)
+					assert.Equal(t, r.input.permission, input.Permission, r.name)
+					grantCounter.Inc()
+					if r.grantOutput != nil {
+						return r.grantOutput
+					}
+					return createFailedGrant()
+				}
+
+				initialUsers := app.Helper.GetAllUsers(ctx, t)
+
+				output := app.Service.GrantPermission(ctx, &user.GrantPermissionInput{
+					TraceId:      r.input.traceId,
+					ActorId:      r.input.actorId,
+					TargetUserId: r.input.targetUserId,
+					Permission:   r.input.permission,
+				})
+
+				afterUsers := app.Helper.GetAllUsers(ctx, t)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - super user check call count")
+				assert.Equal(t, r.expected.grantCalls, grantCounter.Total(), r.name+" - grant call count")
+
+				// GrantPermission never touches the users table directly
+				assert.Equal(t, initialUsers, afterUsers, r.name+" - users table must not change")
 			}
 
 			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
@@ -2141,117 +1246,138 @@ func TestUserDeleteMember(t *testing.T) {
 				}
 			}
 
-			suite.Run(t, "DeleteMember scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+			suite.Run(t, "GrantPermission scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
 				runRows(t, app, []*testRow{
-					// ===== Validation Tests: Requester ID =====
-					{
-						name: "Should fail when requester ID is zero",
-						input: &input{
-							requesterID: 0,
-							memberID:    Members[0].Id,
-						},
-						expected: &expected{
-							success: false,
-							message: "Requester ID is mandatory",
-						},
-					},
-
-					// ===== Validation Tests: Member ID =====
-					{
-						name: "Should fail when member ID is zero",
-						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    0,
-						},
-						expected: &expected{
-							success: false,
-							message: "Member ID is mandatory",
-						},
-					},
-
-					// ===== Authorization Tests =====
-					{
-						name: "Should fail when requester is not the member owner",
-						input: &input{
-							requesterID: Users[1].Id,
-							memberID:    Members[0].Id,
-						},
-						expected: &expected{
-							success: false,
-							message: "Unauthorized delete",
-						},
-					},
-					{
-						name: "Should fail when user tries to delete another user's member",
-						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    Members[2].Id,
-						},
-						expected: &expected{
-							success: false,
-							message: "Unauthorized delete",
-						},
-					},
-
 					// ===== Success Tests =====
 					{
-						name: "Should delete member successfully",
+						name: "Should grant permission when actor holds super user permission",
 						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    Members[0].Id,
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
 						},
 						expected: &expected{
-							success: true,
-							message: "Member deleted successfully",
+							success:           true,
+							message:           "Permission granted successfully",
+							expectedCountMock: 1,
+							grantCalls:        1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+						grantOutput:     createSuccessfulGrant(),
+					},
+
+					// ===== Validation Tests =====
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId:      "",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "TraceId is mandatory",
+							expectedCountMock: 0,
+							grantCalls:        0,
 						},
 					},
 					{
-						name: "Should delete another member from same user",
+						name: "Should fail when actor ID is zero",
 						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    Members[1].Id,
+							traceId:      "trace-test",
+							actorId:      0,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
 						},
 						expected: &expected{
-							success: true,
-							message: "Member deleted successfully",
+							success:           false,
+							message:           "Actor ID is mandatory",
+							expectedCountMock: 0,
+							grantCalls:        0,
 						},
 					},
 					{
-						name: "Should delete member from different user",
+						name: "Should fail when target user ID is zero",
 						input: &input{
-							requesterID: Users[1].Id,
-							memberID:    Members[2].Id,
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: 0,
+							permission:   "user:profile_update",
 						},
 						expected: &expected{
-							success: true,
-							message: "Member deleted successfully",
+							success:           false,
+							message:           "Target user ID is mandatory",
+							expectedCountMock: 0,
+							grantCalls:        0,
+						},
+					},
+					{
+						name: "Should fail when permission is empty",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Permission is mandatory",
+							expectedCountMock: 0,
+							grantCalls:        0,
 						},
 					},
 
-					// ===== Idempotency Test =====
+					// ===== Permission Tests =====
 					{
-						name: "Should return success when deleting non-existent member (idempotent)",
+						name: "Should fail when actor does not hold super user permission",
 						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    99999,
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
 						},
 						expected: &expected{
-							success: true,
-							noOp:    true,
-							message: "Member deleted successfully",
+							success:           false,
+							message:           "Unauthorized: only super user can grant permissions",
+							expectedCountMock: 1,
+							grantCalls:        0,
 						},
+						permissionCheck: createDeniedPermissionCheck(),
 					},
 					{
-						name: "Should return success when deleting already deleted member (idempotent)",
+						name: "Should fail when permission module cannot confirm super user check",
 						input: &input{
-							requesterID: Users[0].Id,
-							memberID:    Members[0].Id,
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
 						},
 						expected: &expected{
-							success: true,
-							noOp:    true,
-							message: "Member deleted successfully",
+							success:           false,
+							message:           "Unauthorized: only super user can grant permissions",
+							expectedCountMock: 1,
+							grantCalls:        0,
 						},
+						permissionCheck: createFailedPermissionCheck(),
+					},
+					{
+						name: "Should forward message when permission module fails to grant",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Failed to grant permission",
+							expectedCountMock: 1,
+							grantCalls:        1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+						grantOutput:     createFailedGrant(),
 					},
 				})
 			})
@@ -2259,3 +1385,249 @@ func TestUserDeleteMember(t *testing.T) {
 		})
 	})
 }
+
+func TestUserRevokePermission(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User RevokePermission", func() {
+
+			var Users []DataUser
+
+			type input struct {
+				traceId      string
+				actorId      int
+				targetUserId int
+				permission   string
+			}
+			type expected struct {
+				success           bool
+				message           string
+				expectedCountMock int
+				revokeCalls       int
+			}
+
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+				revokeOutput    *permission.RevokePermissionOutput
+			}
+
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "actoruser",
+						Email:    "actor@example.com",
+						FullName: "Actor User",
+						Password: "password123",
+					},
+					{
+						Idx:      1,
+						Username: "targetuser",
+						Email:    "target@example.com",
+						FullName: "Target User",
+						Password: "password123",
+					},
+				}
+
+				// Insert users and store actual database IDs
+				for i, userData := range Users {
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					Users[i].Id = insertedUser.Id // Store actual database ID
+				}
+			})
+
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				counter := &testsuite.Counter{}
+				revokeCounter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.actorId, input.UserID, r.name)
+					assert.Equal(t, fmt.Sprintf("%d:super_user", r.input.actorId), input.Permission, r.name)
+					counter.Inc()
+					if r.permissionCheck != nil {
+						return r.permissionCheck
+					}
+					return createFailedPermissionCheck()
+				}
+
+				app.PermissionSvcMock.RevokePermissionStub = func(ctx context.Context, input *permission.RevokePermissionInput) *permission.RevokePermissionOutput {
+					assert.Equal(t, r.input.targetUserId, input.UserID, r.name)
+					assert.Equal(t, r.input.permission, input.Permission, r.name)
+					revokeCounter.Inc()
+					if r.revokeOutput != nil {
+						return r.revokeOutput
+					}
+					return createFailedRevoke()
+				}
+
+				initialUsers := app.Helper.GetAllUsers(ctx, t)
+
+				output := app.Service.RevokePermission(ctx, &user.RevokePermissionInput{
+					TraceId:      r.input.traceId,
+					ActorId:      r.input.actorId,
+					TargetUserId: r.input.targetUserId,
+					Permission:   r.input.permission,
+				})
+
+				afterUsers := app.Helper.GetAllUsers(ctx, t)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - super user check call count")
+				assert.Equal(t, r.expected.revokeCalls, revokeCounter.Total(), r.name+" - revoke call count")
+
+				// RevokePermission never touches the users table directly
+				assert.Equal(t, initialUsers, afterUsers, r.name+" - users table must not change")
+			}
+
+			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			suite.Run(t, "RevokePermission scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				runRows(t, app, []*testRow{
+					// ===== Success Tests =====
+					{
+						name: "Should revoke permission when actor holds super user permission",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permission revoked successfully",
+							expectedCountMock: 1,
+							revokeCalls:       1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+						revokeOutput:    createSuccessfulRevoke(),
+					},
+
+					// ===== Validation Tests =====
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId:      "",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "TraceId is mandatory",
+							expectedCountMock: 0,
+							revokeCalls:       0,
+						},
+					},
+					{
+						name: "Should fail when actor ID is zero",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      0,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Actor ID is mandatory",
+							expectedCountMock: 0,
+							revokeCalls:       0,
+						},
+					},
+					{
+						name: "Should fail when target user ID is zero",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: 0,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Target user ID is mandatory",
+							expectedCountMock: 0,
+							revokeCalls:       0,
+						},
+					},
+					{
+						name: "Should fail when permission is empty",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Permission is mandatory",
+							expectedCountMock: 0,
+							revokeCalls:       0,
+						},
+					},
+
+					// ===== Permission Tests =====
+					{
+						name: "Should fail when actor does not hold super user permission",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: only super user can revoke permissions",
+							expectedCountMock: 1,
+							revokeCalls:       0,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+					{
+						name: "Should fail when permission module cannot confirm super user check",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: only super user can revoke permissions",
+							expectedCountMock: 1,
+							revokeCalls:       0,
+						},
+						permissionCheck: createFailedPermissionCheck(),
+					},
+					{
+						name: "Should forward message when permission module fails to revoke",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+							permission:   "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Failed to revoke permission",
+							expectedCountMock: 1,
+							revokeCalls:       1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+						revokeOutput:    createFailedRevoke(),
+					},
+				})
+			})
+
+		})
+	})
+}
+
+

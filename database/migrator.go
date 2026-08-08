@@ -8,6 +8,7 @@ import (
 
 	"github.com/pressly/goose/v3"
 
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 )
 
@@ -20,10 +21,16 @@ type Domain struct {
 // All contains every domain's migrations in dependency order.
 var All = []Domain{
 	{Name: "user", FS: user.Migrations},
+	{Name: "permission", FS: permission.Migrations},
 }
 
 // UserOnly is a convenience slice for running only user-domain migrations.
 var UserOnly = All[:1]
+
+// PermissionOnly is a convenience slice for running only permission-domain migrations.
+var PermissionOnly = All[1:2]
+
+
 
 // Run applies goose migrations for the given domains.
 // The db connection's search_path should already target the desired schema.

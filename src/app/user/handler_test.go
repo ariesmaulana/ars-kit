@@ -246,189 +246,422 @@ func TestHandlerProfile_NoTokenReturns401(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// GET /api/v1/users/members
+// PUT /api/v1/users/profile/username
 // ──────────────────────────────────────────────────────────────
 
-func TestHandlerGetMembers_MapsMemberDTOsAndPagination(t *testing.T) {
+func TestHandlerUpdateUsername_Success(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.GetMembersByUserIdReturns(&user.GetMembersByUserIdOutput{
+	fake.UpdateUsernameReturns(&user.UpdateUsernameOutput{
 		Success: true,
-		Message: "Member retrieved successfully",
-		Members: []user.Member{
-			{Id: 10, UserId: 1, Name: "Alice", MonthlyIncome: 5000000},
-			{Id: 11, UserId: 1, Name: "Bob", MonthlyIncome: 3000000},
-		},
-		Total:      5,
-		TotalPages: 3,
-		Page:       1,
-		PageSize:   2,
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/members?page=1&page_size=2", nil)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp user.MembersResponse
-	decodeJSON(t, rec, &resp)
-	assert.True(t, resp.Success)
-	assert.Len(t, resp.Data, 2)
-	assert.Equal(t, 10, resp.Data[0].Id)
-	assert.Equal(t, "Alice", resp.Data[0].Name)
-	assert.Equal(t, 5000000, resp.Data[0].MonthlyIncome)
-	assert.Equal(t, 11, resp.Data[1].Id)
-
-	assert.Equal(t, 1, resp.Pagination.Page)
-	assert.Equal(t, 2, resp.Pagination.PageSize)
-	assert.Equal(t, 5, resp.Pagination.Total)
-	assert.Equal(t, 3, resp.Pagination.TotalPages)
-}
-
-func TestHandlerGetMembers_PageQueryParamsPassedToService(t *testing.T) {
-	e, fake := newHandlerSetup()
-
-	fake.GetMembersByUserIdReturns(&user.GetMembersByUserIdOutput{
-		Success: true, Page: 3, PageSize: 20,
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/members?page=3&page_size=20", nil)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	_, input := fake.GetMembersByUserIdArgsForCall(0)
-	assert.Equal(t, 3, input.Page)
-	assert.Equal(t, 20, input.PageSize)
-}
-
-// ──────────────────────────────────────────────────────────────
-// POST /api/v1/users/members
-// ──────────────────────────────────────────────────────────────
-
-func TestHandlerAddMember_MapsMemberDTO(t *testing.T) {
-	e, fake := newHandlerSetup()
-
-	fake.AddMemberReturns(&user.AddMemberOutput{
-		Success: true,
-		Message: "Member added successfully",
-		Member: user.Member{
-			Id:            55,
-			UserId:        1,
-			Name:          "Dave",
-			MonthlyIncome: 4000000,
+		Message: "Username updated successfully",
+		User: user.User{
+			Id:       5,
+			Username: "newname",
+			Email:    "carol@example.com",
+			FullName: "Carol White",
 		},
 	})
 
-	body := jsonBody(t, map[string]interface{}{"name": "Dave", "monthly_income": 4000000})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/members", body)
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp user.MemberResponse
-	decodeJSON(t, rec, &resp)
-	assert.True(t, resp.Success)
-	assert.Equal(t, 55, resp.Data.Id)
-	assert.Equal(t, 1, resp.Data.UserId)
-	assert.Equal(t, "Dave", resp.Data.Name)
-	assert.Equal(t, 4000000, resp.Data.MonthlyIncome)
-}
-
-func TestHandlerAddMember_BodyFieldsPassedToService(t *testing.T) {
-	e, fake := newHandlerSetup()
-	fake.AddMemberReturns(&user.AddMemberOutput{Success: true, Member: user.Member{Id: 1}})
-
-	body := jsonBody(t, map[string]interface{}{"name": "Eve", "monthly_income": 7500000})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/members", body)
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	body := jsonBody(t, map[string]string{"new_username": "newname"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/username", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	_, input := fake.AddMemberArgsForCall(0)
-	assert.Equal(t, 5, input.Id) // user ID from JWT
-	assert.Equal(t, "Eve", input.Name)
-	assert.Equal(t, 7500000, input.MonthlyIncome)
-}
-
-// ──────────────────────────────────────────────────────────────
-// PUT /api/v1/users/members/:id
-// ──────────────────────────────────────────────────────────────
-
-func TestHandlerUpdateMemberInfo_PathParamAndBodyPassedToService(t *testing.T) {
-	e, fake := newHandlerSetup()
-	fake.UpdateMemberInfoReturns(&user.UpdateMemberInfoOutput{Success: true})
-
-	body := jsonBody(t, map[string]interface{}{"name": "Updated Name", "monthly_income": 8000000})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/members/77", body)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(3))
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	_, input := fake.UpdateMemberInfoArgsForCall(0)
-	assert.Equal(t, 77, input.Id)           // member ID from path
-	assert.Equal(t, 3, input.RequesterId)   // user ID from JWT
-	assert.Equal(t, "Updated Name", input.Name)
-	assert.Equal(t, 8000000, input.MonthlyIncome)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Username updated successfully", resp.Message)
+	assert.Equal(t, 5, resp.Data.Id)
+	assert.Equal(t, "newname", resp.Data.Username)
 }
 
-func TestHandlerUpdateMemberInfo_ServiceFailReturns400(t *testing.T) {
+func TestHandlerUpdateUsername_UserIDFromJWTPassedToService(t *testing.T) {
 	e, fake := newHandlerSetup()
-	fake.UpdateMemberInfoReturns(&user.UpdateMemberInfoOutput{
-		Success: false,
-		Message: "Member not found",
+
+	fake.UpdateUsernameReturns(&user.UpdateUsernameOutput{
+		Success: true,
+		Message: "Username updated successfully",
+		User:    user.User{Id: 99},
 	})
 
-	body := jsonBody(t, map[string]interface{}{"name": "X", "monthly_income": 0})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/members/999", body)
+	body := jsonBody(t, map[string]string{"new_username": "newname"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/username", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(99))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.UpdateUsernameArgsForCall(0)
+	assert.Equal(t, 99, input.Id)
+	assert.Equal(t, "newname", input.NewUsername)
+}
+
+func TestHandlerUpdateUsername_ServiceFailReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateUsernameReturns(&user.UpdateUsernameOutput{
+		Success: false,
+		Message: "Unauthorized: you do not have permission to update profile",
+	})
+
+	body := jsonBody(t, map[string]string{"new_username": "newname"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/username", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: you do not have permission to update profile", resp.Message)
+}
+
+func TestHandlerUpdateUsername_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]string{"new_username": "newname"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/username", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// ──────────────────────────────────────────────────────────────
+// PUT /api/v1/users/profile/password
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerUpdatePassword_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
+		Success: true,
+		Message: "Password updated successfully",
+	})
+
+	body := jsonBody(t, map[string]string{"old_password": "oldpass123", "new_password": "newpass123"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/password", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Password updated successfully", resp.Message)
+}
+
+func TestHandlerUpdatePassword_InvalidOldPasswordReturns401(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
+		Success: false,
+		Message: "Invalid old password",
+	})
+
+	body := jsonBody(t, map[string]string{"old_password": "wrong", "new_password": "newpass123"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/password", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Invalid old password", resp.Message)
+}
+
+func TestHandlerUpdatePassword_ServiceFailReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
+		Success: false,
+		Message: "Unauthorized: you do not have permission to update password",
+	})
+
+	body := jsonBody(t, map[string]string{"old_password": "oldpass123", "new_password": "newpass123"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/password", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: you do not have permission to update password", resp.Message)
+}
+
+func TestHandlerUpdatePassword_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]string{"old_password": "oldpass123", "new_password": "newpass123"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/password", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// ──────────────────────────────────────────────────────────────
+// POST /api/v1/users/permissions/grant
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerGrantPermission_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+		Success: true,
+		Message: "Permission granted successfully",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-// ──────────────────────────────────────────────────────────────
-// DELETE /api/v1/users/members/:id
-// ──────────────────────────────────────────────────────────────
-
-func TestHandlerDeleteMember_PathParamPassedToService(t *testing.T) {
-	e, fake := newHandlerSetup()
-	fake.DeleteMemberReturns(&user.DeleteMemberOutput{Success: true})
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/members/88", nil)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(2))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	_, input := fake.DeleteMemberArgsForCall(0)
-	assert.Equal(t, 88, input.Id)         // member ID from path
-	assert.Equal(t, 2, input.RequesterId) // user ID from JWT
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Permission granted successfully", resp.Message)
 }
 
-func TestHandlerDeleteMember_UnauthorizedReturns403(t *testing.T) {
+func TestHandlerGrantPermission_InputsPassedToService(t *testing.T) {
 	e, fake := newHandlerSetup()
-	fake.DeleteMemberReturns(&user.DeleteMemberOutput{
-		Success: false,
-		Message: "Unauthorized delete",
+
+	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+		Success: true,
+		Message: "Permission granted successfully",
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/members/88", nil)
-	req.Header.Set(echo.HeaderAuthorization, bearerToken(2))
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    11,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.GrantPermissionArgsForCall(0)
+	assert.Equal(t, 7, input.ActorId)                        // from JWT
+	assert.Equal(t, 11, input.TargetUserId)                  // from body
+	assert.Equal(t, "user:profile_update", input.Permission) // from body
+}
+
+func TestHandlerGrantPermission_ServiceFailReturns403(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+		Success: false,
+		Message: "Unauthorized: only super user can grant permissions",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: only super user can grant permissions", resp.Message)
+}
+
+func TestHandlerGrantPermission_ValidationFailReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+		Success: false,
+		Message: "Target user ID is mandatory",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    0,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Target user ID is mandatory", resp.Message)
+}
+
+func TestHandlerGrantPermission_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// ──────────────────────────────────────────────────────────────
+// POST /api/v1/users/permissions/revoke
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerRevokePermission_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+		Success: true,
+		Message: "Permission revoked successfully",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Permission revoked successfully", resp.Message)
+}
+
+func TestHandlerRevokePermission_InputsPassedToService(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+		Success: true,
+		Message: "Permission revoked successfully",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    11,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.RevokePermissionArgsForCall(0)
+	assert.Equal(t, 7, input.ActorId)                        // from JWT
+	assert.Equal(t, 11, input.TargetUserId)                  // from body
+	assert.Equal(t, "user:profile_update", input.Permission) // from body
+}
+
+func TestHandlerRevokePermission_ServiceFailReturns403(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+		Success: false,
+		Message: "Unauthorized: only super user can revoke permissions",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: only super user can revoke permissions", resp.Message)
+}
+
+func TestHandlerRevokePermission_ValidationFailReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+		Success: false,
+		Message: "Permission is mandatory",
+	})
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.ManagePermissionResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Permission is mandatory", resp.Message)
+}
+
+func TestHandlerRevokePermission_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]interface{}{
+		"user_id":    2,
+		"permission": "user:profile_update",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

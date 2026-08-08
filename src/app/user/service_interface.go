@@ -21,16 +21,13 @@ type Service interface {
 	// GetProfileById retrieves a user profile by ID
 	GetProfileById(ctx context.Context, input *GetProfileByIdInput) *GetProfileByIdOutput
 
-	AddMember(ctx context.Context, input *AddMemberInput) *AddMemberOutput
+	// GrantPermission assigns a permission to a target user.
+	// Only a user holding the "<actorId>:super_user" permission may do this.
+	GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput
 
-	GetMemberById(ctx context.Context, input *GetMemberByIdInput) *GetMemberByIdOutput
-
-	// GetMembersByUserId retrieves all members for a user by user ID
-	GetMembersByUserId(ctx context.Context, input *GetMembersByUserIdInput) *GetMembersByUserIdOutput
-
-	UpdateMemberInfo(ctx context.Context, input *UpdateMemberInfoInput) *UpdateMemberInfoOutput
-
-	DeleteMember(ctx context.Context, input *DeleteMemberInput) *DeleteMemberOutput
+	// RevokePermission removes a permission from a target user.
+	// Only a user holding the "<actorId>:super_user" permission may do this.
+	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
 }
 
 // RegisterInput represents input for user registration
@@ -109,71 +106,47 @@ type GetProfileByIdOutput struct {
 	User    User
 }
 
-type AddMemberInput struct {
-	TraceId       string
-	Id            int
-	Name          string
-	MonthlyIncome int
+// Permission action tokens used in "<user_id>:<module>:<action>" permission strings.
+const (
+	// ModuleUser is how user-module permissions are namespaced.
+	ModuleUser = "user"
+
+	// ActionUpdateProfile gates UpdateUsername.
+	ActionUpdateProfile = "profile_update"
+	// ActionUpdatePassword gates UpdatePassword.
+	ActionUpdatePassword = "password_update"
+
+	// PermissionSuperUser is the special permission that grants a user access
+	// to every action (wildcard) and the right to manage other users'
+	// permissions. It is checked as "<user_id>:super_user".
+	PermissionSuperUser = "super_user"
+)
+
+// GrantPermissionInput represents input for assigning a permission to a user.
+type GrantPermissionInput struct {
+	TraceId      string
+	ActorId      int // Must hold the "<actorId>:super_user" permission
+	TargetUserId int
+	Permission   string // e.g. "user:profile_update" or "super_user"
 }
 
-type AddMemberOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	Member  Member
-}
-
-type GetMemberByIdInput struct {
-	TraceId  string
-	MemberId int
-}
-
-type GetMemberByIdOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	Member  Member
-}
-
-type GetMembersByUserIdInput struct {
-	TraceId  string
-	UserId   int
-	Page     int // 1-based; defaults to 1
-	PageSize int // items per page; defaults to 10, max 100
-}
-
-type GetMembersByUserIdOutput struct {
-	Success    bool
-	Message    string
-	TraceId    string
-	Members    []Member
-	Total      int // total number of members across all pages
-	TotalPages int
-	Page       int
-	PageSize   int
-}
-
-type UpdateMemberInfoInput struct {
-	TraceId       string
-	RequesterId   int
-	Id            int
-	Name          string
-	MonthlyIncome int
-}
-
-type UpdateMemberInfoOutput struct {
+// GrantPermissionOutput represents output after assigning a permission.
+type GrantPermissionOutput struct {
 	Success bool
 	Message string
 	TraceId string
 }
 
-type DeleteMemberInput struct {
-	TraceId     string
-	RequesterId int
-	Id          int
+// RevokePermissionInput represents input for removing a permission from a user.
+type RevokePermissionInput struct {
+	TraceId      string
+	ActorId      int // Must hold the "<actorId>:super_user" permission
+	TargetUserId int
+	Permission   string
 }
 
-type DeleteMemberOutput struct {
+// RevokePermissionOutput represents output after removing a permission.
+type RevokePermissionOutput struct {
 	Success bool
 	Message string
 	TraceId string

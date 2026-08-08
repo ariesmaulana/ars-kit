@@ -2,7 +2,7 @@ package user
 
 import (
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -58,10 +58,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
 	protected.PUT("/profile/password", h.UpdatePassword)
-	protected.GET("/members", h.GetMembers)
-	protected.POST("/members", h.AddMember)
-	protected.PUT("/members/:id", h.UpdateMemberInfo)
-	protected.DELETE("/members/:id", h.DeleteMember)
+	protected.POST("/permissions/grant", h.GrantPermission)
+	protected.POST("/permissions/revoke", h.RevokePermission)
 }
 
 // HTTP Request/Response structs
@@ -91,18 +89,6 @@ type UpdatePasswordRequest struct {
 	NewPassword string `json:"new_password" validate:"required,min=6"`
 }
 
-// AddMemberRequest represents the HTTP request body for adding a member
-type AddMemberRequest struct {
-	Name          string `json:"name" validate:"required,min=2"`
-	MonthlyIncome int    `json:"monthly_income" validate:"gte=0"`
-}
-
-// UpdateMemberInfoRequest represents the HTTP request body for updating member info
-type UpdateMemberInfoRequest struct {
-	Name          string `json:"name" validate:"required,min=2"`
-	MonthlyIncome int    `json:"monthly_income" validate:"gte=0"`
-}
-
 // UserDTO represents a user in HTTP responses (without password)
 type UserDTO struct {
 	Id        int       `json:"id"`
@@ -111,16 +97,6 @@ type UserDTO struct {
 	FullName  string    `json:"full_name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// MemberDTO represents a member in HTTP responses
-type MemberDTO struct {
-	Id            int       `json:"id"`
-	UserId        int       `json:"user_id"`
-	Name          string    `json:"name"`
-	MonthlyIncome int       `json:"monthly_income"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // PaginationResponse holds pagination metadata for list responses
@@ -146,21 +122,6 @@ type UserResponse struct {
 	Data    *UserDTO `json:"data,omitempty"`
 }
 
-// MembersResponse represents the HTTP response for members list operations
-type MembersResponse struct {
-	Success    bool                `json:"success"`
-	Message    string              `json:"message"`
-	Data       []MemberDTO         `json:"data,omitempty"`
-	Pagination *PaginationResponse `json:"pagination,omitempty"`
-}
-
-// MemberResponse represents the HTTP response for single member operations
-type MemberResponse struct {
-	Success bool       `json:"success"`
-	Message string     `json:"message"`
-	Data    *MemberDTO `json:"data,omitempty"`
-}
-
 func toUserDTO(user User) UserDTO {
 	return UserDTO{
 		Id:        user.Id,
@@ -170,25 +131,6 @@ func toUserDTO(user User) UserDTO {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
-}
-
-func toMemberDTO(member Member) MemberDTO {
-	return MemberDTO{
-		Id:            member.Id,
-		UserId:        member.UserId,
-		Name:          member.Name,
-		MonthlyIncome: member.MonthlyIncome,
-		CreatedAt:     member.CreatedAt,
-		UpdatedAt:     member.UpdatedAt,
-	}
-}
-
-func toMemberDTOs(members []Member) []MemberDTO {
-	dtos := make([]MemberDTO, 0, len(members))
-	for _, member := range members {
-		dtos = append(dtos, toMemberDTO(member))
-	}
-	return dtos
 }
 
 // Register handles POST /api/v1/users/register
@@ -474,252 +416,126 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	})
 }
 
-// GetMembers handles GET /api/v1/users/members
-// @Summary Get user members
-// @Description Get paginated members for the authenticated user
-// @Tags users
-// @Accept json
-// @Produce json
-// @Security BearerAuth
-// @Param page query int false "Page number (default: 1)"
-// @Param page_size query int false "Items per page (default: 10, max: 100)"
-// @Success 200 {object} MembersResponse
-// @Failure 401 {object} MembersResponse
-// @Failure 404 {object} MembersResponse
-// @Router /api/v1/users/members [get]
-func (h *Handler) GetMembers(c echo.Context) error {
-	traceID := xid.New().String()
-
-	userID, err := GetUserIdFromContext(c)
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, MembersResponse{
-			Success: false,
-			Message: "User not authenticated",
-		})
-	}
-
-	page := 1
-	pageSize := 10
-
-	if p := c.QueryParam("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
-			page = v
-		}
-	}
-	if ps := c.QueryParam("page_size"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
-			pageSize = v
-		}
-	}
-
-	output := h.service.GetMembersByUserId(c.Request().Context(), &GetMembersByUserIdInput{
-		TraceId:  traceID,
-		UserId:   userID,
-		Page:     page,
-		PageSize: pageSize,
-	})
-
-	if !output.Success {
-		status := http.StatusInternalServerError
-		if output.Message == "User not found" {
-			status = http.StatusNotFound
-		}
-		return c.JSON(status, MembersResponse{
-			Success: false,
-			Message: output.Message,
-		})
-	}
-
-	dtos := toMemberDTOs(output.Members)
-	return c.JSON(http.StatusOK, MembersResponse{
-		Success: true,
-		Message: output.Message,
-		Data:    dtos,
-		Pagination: &PaginationResponse{
-			Page:       output.Page,
-			PageSize:   output.PageSize,
-			Total:      output.Total,
-			TotalPages: output.TotalPages,
-		},
-	})
+// ManagePermissionRequest represents the HTTP request body for granting/revoking a permission
+type ManagePermissionRequest struct {
+	TargetUserId int    `json:"user_id" validate:"required"`
+	Permission   string `json:"permission" validate:"required"`
 }
 
-// AddMember handles POST /api/v1/users/members
-// @Summary Add a new member
-// @Description Add a new member for the authenticated user
+// ManagePermissionResponse represents the HTTP response for granting/revoking a permission
+type ManagePermissionResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// GrantPermission handles POST /api/v1/users/permissions/grant
+// @Summary Grant permission
+// @Description Grant a permission string to a target user. Only super user may do this.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param member body AddMemberRequest true "Member data"
-// @Success 201 {object} MemberResponse
-// @Failure 400 {object} MemberResponse
-// @Failure 401 {object} MemberResponse
-// @Router /api/v1/users/members [post]
-func (h *Handler) AddMember(c echo.Context) error {
+// @Param permission body ManagePermissionRequest true "Permission grant data"
+// @Success 200 {object} ManagePermissionResponse
+// @Failure 400 {object} ManagePermissionResponse
+// @Failure 401 {object} ManagePermissionResponse
+// @Router /api/v1/users/permissions/grant [post]
+func (h *Handler) GrantPermission(c echo.Context) error {
 	traceID := xid.New().String()
 
-	userID, err := GetUserIdFromContext(c)
+	actorID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, MemberResponse{
+		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
 	}
 
-	var req AddMemberRequest
+	var req ManagePermissionRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, MemberResponse{
+		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
 	}
 
-	output := h.service.AddMember(c.Request().Context(), &AddMemberInput{
-		TraceId:       traceID,
-		Id:            userID,
-		Name:          req.Name,
-		MonthlyIncome: req.MonthlyIncome,
+	output := h.service.GrantPermission(c.Request().Context(), &GrantPermissionInput{
+		TraceId:      traceID,
+		ActorId:      actorID,
+		TargetUserId: req.TargetUserId,
+		Permission:   req.Permission,
 	})
 
 	if !output.Success {
 		status := http.StatusBadRequest
-		if output.Message == "User not found" {
-			status = http.StatusNotFound
-		}
-		return c.JSON(status, MemberResponse{
-			Success: false,
-			Message: output.Message,
-		})
-	}
-
-	dto := toMemberDTO(output.Member)
-	return c.JSON(http.StatusCreated, MemberResponse{
-		Success: true,
-		Message: output.Message,
-		Data:    &dto,
-	})
-}
-
-// UpdateMemberInfo handles PUT /api/v1/users/members/:id
-// @Summary Update member information
-// @Description Update name and monthly income for a specific member
-// @Tags users
-// @Accept json
-// @Produce json
-// @Security BearerAuth
-// @Param id path int true "Member ID"
-// @Param member body UpdateMemberInfoRequest true "Member update data"
-// @Success 200 {object} UserResponse
-// @Failure 400 {object} UserResponse
-// @Failure 401 {object} UserResponse
-// @Failure 404 {object} UserResponse
-// @Router /api/v1/users/members/{id} [put]
-func (h *Handler) UpdateMemberInfo(c echo.Context) error {
-	traceID := xid.New().String()
-
-	userId, err := GetUserIdFromContext(c)
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, UserResponse{
-			Success: false,
-			Message: "User not authenticated",
-		})
-	}
-
-	memberId := 0
-	if err := echo.PathParamsBinder(c).Int("id", &memberId).BindError(); err != nil {
-		return c.JSON(http.StatusBadRequest, UserResponse{
-			Success: false,
-			Message: "Invalid member ID",
-		})
-	}
-
-	var req UpdateMemberInfoRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, UserResponse{
-			Success: false,
-			Message: "Invalid request body",
-		})
-	}
-
-	output := h.service.UpdateMemberInfo(c.Request().Context(), &UpdateMemberInfoInput{
-		TraceId:       traceID,
-		RequesterId:   userId,
-		Id:            memberId,
-		Name:          req.Name,
-		MonthlyIncome: req.MonthlyIncome,
-	})
-
-	if !output.Success {
-		status := http.StatusBadRequest
-		if output.Message == "Member not found" {
-			status = http.StatusNotFound
-		}
-		return c.JSON(status, UserResponse{
-			Success: false,
-			Message: output.Message,
-		})
-	}
-
-	return c.JSON(http.StatusOK, UserResponse{
-		Success: true,
-		Message: "Member information updated successfully",
-	})
-}
-
-// DeleteMember handles DELETE /api/v1/users/members/:id
-// @Summary Delete a member
-// @Description Delete a specific member by ID
-// @Tags users
-// @Accept json
-// @Produce json
-// @Security BearerAuth
-// @Param id path int true "Member ID"
-// @Success 200 {object} UserResponse
-// @Failure 400 {object} UserResponse
-// @Failure 401 {object} UserResponse
-// @Failure 404 {object} UserResponse
-// @Router /api/v1/users/members/{id} [delete]
-func (h *Handler) DeleteMember(c echo.Context) error {
-	traceID := xid.New().String()
-
-	userId, err := GetUserIdFromContext(c)
-	if err != nil {
-		return c.JSON(http.StatusUnauthorized, UserResponse{
-			Success: false,
-			Message: "User not authenticated",
-		})
-	}
-
-	memberId := 0
-	if err := echo.PathParamsBinder(c).Int("id", &memberId).BindError(); err != nil {
-		return c.JSON(http.StatusBadRequest, UserResponse{
-			Success: false,
-			Message: "Invalid member ID",
-		})
-	}
-
-	output := h.service.DeleteMember(c.Request().Context(), &DeleteMemberInput{
-		TraceId:     traceID,
-		RequesterId: userId,
-		Id:          memberId,
-	})
-
-	if !output.Success {
-		status := http.StatusBadRequest
-		if output.Message == "Member not found" {
-			status = http.StatusNotFound
-		} else if output.Message == "Unauthorized delete" {
+		if strings.HasPrefix(output.Message, "Unauthorized:") {
 			status = http.StatusForbidden
 		}
-		return c.JSON(status, UserResponse{
+
+		return c.JSON(status, ManagePermissionResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	return c.JSON(http.StatusOK, UserResponse{
+	return c.JSON(http.StatusOK, ManagePermissionResponse{
 		Success: true,
-		Message: "Member deleted successfully",
+		Message: output.Message,
+	})
+}
+
+// RevokePermission handles POST /api/v1/users/permissions/revoke
+// @Summary Revoke permission
+// @Description Revoke a permission from a target user. Only superuser may do this.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ManagePermissionRequest true "Permission revoke data"
+// @Success 200 {object} ManagePermissionResponse
+// @Failure 400 {object} ManagePermissionResponse
+// @Failure 401 {object} ManagePermissionResponse
+// @Router /api/v1/users/permissions/revoke [post]
+func (h *Handler) RevokePermission(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req ManagePermissionRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.RevokePermission(c.Request().Context(), &RevokePermissionInput{
+		TraceId:      traceID,
+		ActorId:      actorID,
+		TargetUserId: req.TargetUserId,
+		Permission:   req.Permission,
+	})
+
+	if !output.Success {
+		status := http.StatusBadRequest
+		if strings.HasPrefix(output.Message, "Unauthorized:") {
+			status = http.StatusForbidden
+		}
+
+		return c.JSON(status, ManagePermissionResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ManagePermissionResponse{
+		Success: true,
+		Message: output.Message,
 	})
 }

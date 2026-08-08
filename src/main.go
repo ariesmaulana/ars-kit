@@ -9,8 +9,9 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
-	appmw "github.com/ariesmaulana/ars-kit/src/middleware"
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	appmw "github.com/ariesmaulana/ars-kit/src/middleware"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/rs/zerolog/log"
@@ -93,8 +94,15 @@ func main() {
 		CookieHTTPOnly:  true,
 	}
 
+	//foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
+	permissionStorage := permission.NewStorage(db.Pool)
+	permissionService := permission.NewService(permissionStorage)
+
+	// end of foundation module
+
+	// App Modules
 	userStorage := user.NewStorage(db.Pool)
-	userService := user.NewService(userStorage)
+	userService := user.NewService(userStorage, permissionService)
 	jwtService := user.NewJWTService(jwtConfig)
 	userHandler := user.NewHandler(userService, jwtService)
 

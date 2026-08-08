@@ -10,8 +10,8 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // Suite provides testing utilities with database isolation
@@ -31,14 +31,7 @@ type AppContext struct {
 // NewSuite creates a new test suite instance
 func NewSuite(cfg *config.Config, domains []database.Domain) (*Suite, error) {
 	// Connect to database without schema isolation initially
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		cfg.DBUser,
-		cfg.DBPass,
-		cfg.DBHost,
-		cfg.DBPort,
-		cfg.DBName,
-	)
+	dsn := database.DSN(cfg)
 
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -141,15 +134,7 @@ func (s *Suite) dropSchema(schema string) error {
 
 // createSchemaPool creates a new connection pool for a specific schema
 func (s *Suite) createSchemaPool(schema string) (*pgxpool.Pool, error) {
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
-		s.config.DBUser,
-		s.config.DBPass,
-		s.config.DBHost,
-		s.config.DBPort,
-		s.config.DBName,
-		schema,
-	)
+	dsn := database.DSNWithSchema(s.config, schema)
 
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -166,15 +151,7 @@ func (s *Suite) createSchemaPool(schema string) (*pgxpool.Pool, error) {
 
 // runMigrations runs goose migrations into the isolated schema
 func (s *Suite) runMigrations(schema string) error {
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable&search_path=%s",
-		s.config.DBUser,
-		s.config.DBPass,
-		s.config.DBHost,
-		s.config.DBPort,
-		s.config.DBName,
-		schema,
-	)
+	dsn := database.DSNWithSchema(s.config, schema)
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

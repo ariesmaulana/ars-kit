@@ -1,0 +1,158 @@
+package permission
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/rs/zerolog/log"
+)
+
+var _ Service = (*service)(nil)
+
+type service struct {
+	storage Storage
+}
+
+func NewService(storage Storage) Service {
+	return &service{storage: storage}
+}
+
+func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInput) *CheckPermissionOutput {
+	resp := &CheckPermissionOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.UserID == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to check permission"
+		return resp
+	}
+	defer db.Rollback()
+
+	has, err := db.HasPermission(ctx, input.UserID, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission")
+		resp.Message = "Failed to check permission"
+		return resp
+	}
+
+	// A user holding the "<user_id>:super_user" permission is allowed to do
+	// anything: it acts as a wildcard for every other permission check.
+	if !has {
+		has, err = db.HasPermission(ctx, input.UserID, fmt.Sprintf("%d:super_user", input.UserID))
+		if err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check super user permission")
+			resp.Message = "Failed to check permission"
+			return resp
+		}
+	}
+
+	resp.Success = true
+	resp.Message = "Permission check completed"
+	resp.HasPermission = has
+	return resp
+}
+
+func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput {
+	resp := &GrantPermissionOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.UserID == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to grant permission"
+		return resp
+	}
+	defer db.Rollback()
+
+	err = db.AddPermission(ctx, input.UserID, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to grant permission")
+		resp.Message = "Failed to grant permission"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to grant permission"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Permission granted successfully"
+	return resp
+}
+
+func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput {
+	resp := &RevokePermissionOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.UserID == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to revoke permission"
+		return resp
+	}
+	defer db.Rollback()
+
+	err = db.RemovePermission(ctx, input.UserID, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to revoke permission")
+		resp.Message = "Failed to revoke permission"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to revoke permission"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Permission revoked successfully"
+	return resp
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -198,105 +199,68 @@ func (h *TestHelper) GetPool() *pgxpool.Pool {
 	return h.pool
 }
 
-// InsertMember inserts a single member and returns it
-func (h *TestHelper) InsertMember(ctx context.Context, t *testing.T, userId int, name string, monthlyIncome int) *user.Member {
-	query := `
-		INSERT INTO members (user_id, name, monthly_income, created_at, updated_at)
-		VALUES ($1, $2, $3, NOW(), NOW())
-		RETURNING id, user_id, name, monthly_income, created_at, updated_at
-	`
-
-	var m user.Member
-	err := h.pool.QueryRow(ctx, query, userId, name, monthlyIncome).Scan(
-		&m.Id,
-		&m.UserId,
-		&m.Name,
-		&m.MonthlyIncome,
-		&m.CreatedAt,
-		&m.UpdatedAt,
-	)
-	assert.Nil(t, err)
-
-	return &m
-}
-
-// InsertMembers inserts multiple members and returns them
-func (h *TestHelper) InsertMembers(ctx context.Context, t *testing.T, members []MemberFixture) []*user.Member {
-	result := make([]*user.Member, 0, len(members))
-
-	for _, fixture := range members {
-		m := h.InsertMember(ctx, t, fixture.UserId, fixture.Name, fixture.MonthlyIncome)
-		result = append(result, m)
+// createGrantedPermissionCheck returns a mock result where the user holds the
+// requested permission.
+func createGrantedPermissionCheck() *permission.CheckPermissionOutput {
+	return &permission.CheckPermissionOutput{
+		Success:       true,
+		Message:       "Permission check completed",
+		HasPermission: true,
 	}
-
-	return result
 }
 
-// MemberFixture represents a member fixture for testing
-type MemberFixture struct {
-	UserId        int
-	Name          string
-	MonthlyIncome int
-}
-
-// DataMember represents a member fixture for testing
-type DataMember struct {
-	Idx           int // Index in the fixture array
-	Id            int // Actual database ID (populated after insert)
-	UserId        int
-	Name          string
-	MonthlyIncome int
-}
-
-// GetMemberById retrieves a member by ID
-func (h *TestHelper) GetMemberById(ctx context.Context, t *testing.T, id int) user.Member {
-	query := `
-		SELECT id, user_id, name, monthly_income, created_at, updated_at
-		FROM members
-		WHERE id = $1
-	`
-
-	var m user.Member
-	err := h.pool.QueryRow(ctx, query, id).Scan(
-		&m.Id,
-		&m.UserId,
-		&m.Name,
-		&m.MonthlyIncome,
-		&m.CreatedAt,
-		&m.UpdatedAt,
-	)
-	assert.Nil(t, err)
-
-	return m
-}
-
-// GetAllMembers retrieves all members from the database
-func (h *TestHelper) GetAllMembers(ctx context.Context, t *testing.T) map[int]user.Member {
-	query := `
-		SELECT id, user_id, name, monthly_income, created_at, updated_at
-		FROM members
-		ORDER BY id
-	`
-
-	rows, err := h.pool.Query(ctx, query)
-	assert.Nil(t, err)
-	defer rows.Close()
-
-	members := make(map[int]user.Member)
-	for rows.Next() {
-		var m user.Member
-		err := rows.Scan(
-			&m.Id,
-			&m.UserId,
-			&m.Name,
-			&m.MonthlyIncome,
-			&m.CreatedAt,
-			&m.UpdatedAt,
-		)
-		assert.Nil(t, err)
-		members[m.Id] = m
+// createDeniedPermissionCheck returns a mock result where the user does not
+// hold the requested permission.
+func createDeniedPermissionCheck() *permission.CheckPermissionOutput {
+	return &permission.CheckPermissionOutput{
+		Success:       true,
+		Message:       "Permission check completed",
+		HasPermission: false,
 	}
-
-	assert.Nil(t, rows.Err())
-	return members
 }
+
+// createFailedPermissionCheck returns a mock result where the permission
+// module itself fails to confirm the check.
+func createFailedPermissionCheck() *permission.CheckPermissionOutput {
+	return &permission.CheckPermissionOutput{
+		Success: false,
+		Message: "Failed to check permission",
+	}
+}
+
+// createSuccessfulGrant returns a mock result where the permission module
+// granted the permission.
+func createSuccessfulGrant() *permission.GrantPermissionOutput {
+	return &permission.GrantPermissionOutput{
+		Success: true,
+		Message: "Permission granted successfully",
+	}
+}
+
+// createFailedGrant returns a mock result where the permission module failed
+// to grant the permission.
+func createFailedGrant() *permission.GrantPermissionOutput {
+	return &permission.GrantPermissionOutput{
+		Success: false,
+		Message: "Failed to grant permission",
+	}
+}
+
+// createSuccessfulRevoke returns a mock result where the permission module
+// revoked the permission.
+func createSuccessfulRevoke() *permission.RevokePermissionOutput {
+	return &permission.RevokePermissionOutput{
+		Success: true,
+		Message: "Permission revoked successfully",
+	}
+}
+
+// createFailedRevoke returns a mock result where the permission module failed
+// to revoke the permission.
+func createFailedRevoke() *permission.RevokePermissionOutput {
+	return &permission.RevokePermissionOutput{
+		Success: false,
+		Message: "Failed to revoke permission",
+	}
+}
+

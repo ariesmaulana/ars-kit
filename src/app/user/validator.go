@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// emailRegex validates email format (RFC 5322 simplified)
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
 // validateEmail performs comprehensive email validation
 // Returns error if email is invalid, nil if valid
 func validateEmail(email string) error {
@@ -28,12 +31,7 @@ func validateEmail(email string) error {
 		return errors.New("email is too long")
 	}
 
-	// Check for @ symbol
-	if !strings.Contains(email, "@") {
-		return errors.New("email must contain @ symbol")
-	}
-
-	// Split email into local and domain parts
+	// Check for exactly one @ symbol
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
 		return errors.New("email must contain exactly one @ symbol")
@@ -57,8 +55,7 @@ func validateEmail(email string) error {
 		return err
 	}
 
-	// Final regex pattern for email validation (RFC 5322 simplified)
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	// Validate against RFC 5322 simplified regex
 	if !emailRegex.MatchString(email) {
 		return errors.New("email format is invalid")
 	}

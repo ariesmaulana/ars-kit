@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/database"
+	permissionfakes "github.com/ariesmaulana/ars-kit/src/app/permission/fakes"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 )
@@ -12,9 +13,10 @@ import (
 // UserApp holds the initialized user application components
 type UserApp struct {
 	*testsuite.AppContext
-	Helper  *TestHelper
-	Storage user.Storage
-	Service user.Service
+	Helper            *TestHelper
+	Storage           user.Storage
+	Service           user.Service
+	PermissionSvcMock *permissionfakes.ServiceFake
 }
 
 // TestSuite wraps testsuite.Suite for user tests
@@ -40,17 +42,21 @@ func (ts *TestSuite) Setup(fn func(ctx context.Context, app *UserApp)) {
 	})
 }
 
-// initUserApp initializes user app components from the app context
+// initUserApp initializes user app components from the app context.
+// The permission module is mocked (permissionfakes.ServiceFake) so tests can
+// control permission outcomes per test row without a database.
 func initUserApp(app *testsuite.AppContext) *UserApp {
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
-	service := user.NewService(storage)
+	permissionService := &permissionfakes.ServiceFake{}
+	service := user.NewService(storage, permissionService)
 
 	return &UserApp{
-		AppContext: app,
-		Helper:     helper,
-		Storage:    storage,
-		Service:    service,
+		AppContext:        app,
+		Helper:            helper,
+		Storage:           storage,
+		Service:           service,
+		PermissionSvcMock: permissionService,
 	}
 }
 

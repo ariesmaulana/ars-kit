@@ -3,12 +3,13 @@ package config
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 )
 
-// Config menyimpan semua nilai konfigurasi utama aplikasi.
+// Config holds all main application configuration values.
 type Config struct {
 	AppName string
 	AppEnv  string
@@ -33,7 +34,7 @@ type Config struct {
 	CORSAllowOrigin string
 }
 
-// InitConfig membaca konfigurasi dari .env file (jika ada) atau OS environment.
+// InitConfig loads configuration from .env file (if present) or OS environment.
 // Priority: .env file > OS environment variables
 func InitConfig() (*Config, error) {
 	envs := loadDotEnv(".env")
@@ -50,16 +51,29 @@ func InitConfig() (*Config, error) {
 		DBName:   getEnv("DB_NAME", envs),
 		DBSchema: getEnv("DB_SCHEMA", envs),
 
-		// Database pool configuration with defaults
-		DBMaxConns:          parseInt32Env("DB_MAX_CONNS", envs, 25),
-		DBMinConns:          parseInt32Env("DB_MIN_CONNS", envs, 5),
-		DBMaxConnLifetime:   parseIntEnv("DB_MAX_CONN_LIFETIME", envs, 60),
-		DBMaxConnIdleTime:   parseIntEnv("DB_MAX_CONN_IDLE_TIME", envs, 30),
-		DBHealthCheckPeriod: parseIntEnv("DB_HEALTH_CHECK_PERIOD", envs, 60),
-		DBConnectTimeout:    parseIntEnv("DB_CONNECT_TIMEOUT", envs, 5),
-
 		JWTSecret:       getEnv("JWT_SECRET", envs),
 		CORSAllowOrigin: getEnv("CORS_ALLOW_ORIGIN", envs),
+	}
+
+	var errs []error
+
+	var err error
+
+	cfg.DBMaxConns, err = parseInt32Env("DB_MAX_CONNS", envs, 25)
+	if err != nil { errs = append(errs, err) }
+	cfg.DBMinConns, err = parseInt32Env("DB_MIN_CONNS", envs, 5)
+	if err != nil { errs = append(errs, err) }
+	cfg.DBMaxConnLifetime, err = parseIntEnv("DB_MAX_CONN_LIFETIME", envs, 60)
+	if err != nil { errs = append(errs, err) }
+	cfg.DBMaxConnIdleTime, err = parseIntEnv("DB_MAX_CONN_IDLE_TIME", envs, 30)
+	if err != nil { errs = append(errs, err) }
+	cfg.DBHealthCheckPeriod, err = parseIntEnv("DB_HEALTH_CHECK_PERIOD", envs, 60)
+	if err != nil { errs = append(errs, err) }
+	cfg.DBConnectTimeout, err = parseIntEnv("DB_CONNECT_TIMEOUT", envs, 5)
+	if err != nil { errs = append(errs, err) }
+
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -100,7 +114,7 @@ func getEnv(key string, dotEnvMap map[string]string) string {
 	return ""
 }
 
-// loadDotEnv membaca file .env ke dalam map[string]string.
+// loadDotEnv loads a .env file into a map[string]string.
 func loadDotEnv(filename string) map[string]string {
 	envMap := make(map[string]string)
 	file, err := os.Open(filename)
@@ -123,28 +137,30 @@ func loadDotEnv(filename string) map[string]string {
 	return envMap
 }
 
-// parseIntEnv parses an integer environment variable with a default value
-func parseIntEnv(key string, dotEnvMap map[string]string, defaultValue int) int {
+// parseIntEnv parses an integer environment variable with a default value.
+// Returns error if the env var is set but not a valid integer.
+func parseIntEnv(key string, dotEnvMap map[string]string, defaultValue int) (int, error) {
 	valStr := getEnv(key, dotEnvMap)
 	if valStr == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 	val, err := strconv.Atoi(valStr)
 	if err != nil {
-		return defaultValue
+		return defaultValue, fmt.Errorf("invalid %s value %q: %w", key, valStr, err)
 	}
-	return val
+	return val, nil
 }
 
-// parseInt32Env parses an int32 environment variable with a default value
-func parseInt32Env(key string, dotEnvMap map[string]string, defaultValue int32) int32 {
+// parseInt32Env parses an int32 environment variable with a default value.
+// Returns error if the env var is set but not a valid integer.
+func parseInt32Env(key string, dotEnvMap map[string]string, defaultValue int32) (int32, error) {
 	valStr := getEnv(key, dotEnvMap)
 	if valStr == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 	val, err := strconv.ParseInt(valStr, 10, 32)
 	if err != nil {
-		return defaultValue
+		return defaultValue, fmt.Errorf("invalid %s value %q: %w", key, valStr, err)
 	}
-	return int32(val)
+	return int32(val), nil
 }

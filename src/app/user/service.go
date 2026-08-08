@@ -2,9 +2,12 @@ package user
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 )
 
 // Compile-time check to ensure service implements Service interface
@@ -12,13 +15,15 @@ var _ Service = (*service)(nil)
 
 // service implements the Service interface
 type service struct {
-	storage Storage
+	storage           Storage
+	permissionService permission.Service
 }
 
 // NewService creates a new user service instance
-func NewService(storage Storage) Service {
+func NewService(storage Storage, permissionService permission.Service) Service {
 	return &service{
-		storage: storage,
+		storage:           storage,
+		permissionService: permissionService,
 	}
 }
 
@@ -71,6 +76,7 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to register user"
 		return resp
 	}
 	defer db.Rollback()
@@ -137,6 +143,7 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to login"
 		return resp
 	}
 	defer db.Rollback()
@@ -183,6 +190,41 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	return resp
 }
 
+// permissionKey builds a "<module>:<action>" permission string, e.g.
+// "user:profile_update". The owning user's id is prefixed by hasPermission.
+func permissionKey(module, action string) string {
+	return fmt.Sprintf("%s:%s", module, action)
+}
+
+// hasPermission reports whether the acting user holds the given permission,
+// which is either an action permission ("user:profile_update") or the super
+// user permission (PermissionSuperUser). The key is checked as
+// "<user_id>:<permission>"; the permission module also grants access to users
+// holding "<user_id>:super_user". It logs and returns false when the
+// permission module cannot confirm it.
+func (s *service) hasPermission(ctx context.Context, traceId string, userID int, perm string) bool {
+	if s.permissionService == nil {
+		log.Warn().Str("traceId", traceId).Int("userId", userID).Str("permission", perm).Msg("Permission service not wired")
+		return false
+	}
+
+	key := fmt.Sprintf("%d:%s", userID, perm)
+	output := s.permissionService.CheckPermission(ctx, &permission.CheckPermissionInput{
+		TraceId:    traceId,
+		UserID:     userID,
+		Permission: key,
+	})
+	if !output.Success {
+		log.Warn().
+			Str("traceId", traceId).
+			Int("userId", userID).
+			Str("permission", key).
+			Msg("Permission check failed")
+		return false
+	}
+	return output.HasPermission
+}
+
 // UpdateUsername updates a user's username
 func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput) *UpdateUsernameOutput {
 	resp := &UpdateUsernameOutput{TraceId: input.TraceId}
@@ -200,10 +242,16 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 		return resp
 	}
 
+	if !s.hasPermission(ctx, input.TraceId, input.Id, permissionKey(ModuleUser, ActionUpdateProfile)) {
+		resp.Message = "Unauthorized: you do not have permission to update profile"
+		return resp
+	}
+
 	// Begin transaction
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update username"
 		return resp
 	}
 	defer db.Rollback()
@@ -281,10 +329,16 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		return resp
 	}
 
+	if !s.hasPermission(ctx, input.TraceId, input.Id, permissionKey(ModuleUser, ActionUpdatePassword)) {
+		resp.Message = "Unauthorized: you do not have permission to update password"
+		return resp
+	}
+
 	// Begin transaction
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update password"
 		return resp
 	}
 	defer db.Rollback()
@@ -392,385 +446,94 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	return resp
 }
 
-// AddMember adds a new member to a user's account
-func (s *service) AddMember(ctx context.Context, input *AddMemberInput) *AddMemberOutput {
-	resp := &AddMemberOutput{TraceId: input.TraceId}
+// GrantPermission assigns a permission to a target user.
+// Only an actor holding the "<actorId>:super_user" permission may do this.
+func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput {
+	resp := &GrantPermissionOutput{TraceId: input.TraceId}
 
-	// Validate input
-	if input.Name == "" {
-		log.Warn().Msg("Member name empty")
-		resp.Message = "Member name is mandatory"
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		return resp
+	}
+	if input.TargetUserId == 0 {
+		log.Warn().Msg("Target user ID empty")
+		resp.Message = "Target user ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
 		return resp
 	}
 
-	if len(input.Name) < 2 {
-		log.Warn().Msg("Member name too short")
-		resp.Message = "Member name must be at least 2 characters long"
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can grant permissions"
 		return resp
 	}
 
-	if input.MonthlyIncome < 0 {
-		log.Warn().Msg("Monthly income cannot be negative")
-		resp.Message = "Monthly income cannot be negative"
+	output := s.permissionService.GrantPermission(ctx, &permission.GrantPermissionInput{
+		TraceId:    input.TraceId,
+		UserID:     input.TargetUserId,
+		Permission: input.Permission,
+	})
+	if !output.Success {
+		resp.Message = output.Message
 		return resp
 	}
-
-	// Begin transaction
-	db, err := s.storage.BeginTx(ctx)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to add member"
-		return resp
-	}
-	defer db.Rollback()
-
-	// Verify user exists
-	_, err = db.GetUserById(ctx, input.Id)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
-		resp.Message = "User not found"
-		return resp
-	}
-
-	// Insert member
-	memberId, err := db.InsertMember(ctx, input.Id, input.Name, input.MonthlyIncome)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert member")
-		resp.Message = "Failed to add member"
-		return resp
-	}
-
-	// Get the created member
-	member, _, err := db.GetMemberById(ctx, memberId)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get created member")
-		resp.Message = "Failed to add member"
-		return resp
-	}
-
-	// Commit transaction
-	err = db.Commit()
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
-		resp.Message = "Failed to add member"
-		return resp
-	}
-
-	log.Info().
-		Str("traceId", input.TraceId).
-		Int("userId", input.Id).
-		Int("memberId", memberId).
-		Str("memberName", input.Name).
-		Msg("Member added successfully")
 
 	resp.Success = true
-	resp.Message = "Member added successfully"
-	resp.Member = member
-
+	resp.Message = "Permission granted successfully"
 	return resp
 }
 
-// GetMemberById retrieves a member by ID
-func (s *service) GetMemberById(ctx context.Context, input *GetMemberByIdInput) *GetMemberByIdOutput {
-	resp := &GetMemberByIdOutput{TraceId: input.TraceId}
+// RevokePermission removes a permission from a target user.
+// Only the *holding the <actorId>:super_user permission may do this.
+func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput {
+	resp := &RevokePermissionOutput{TraceId: input.TraceId}
 
-	if input.MemberId == 0 {
-		log.Warn().Msg("Member ID empty")
-		resp.Message = "Member ID is mandatory"
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		return resp
+	}
+	if input.TargetUserId == 0 {
+		log.Warn().Msg("Target user ID empty")
+		resp.Message = "Target user ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
 		return resp
 	}
 
-	// Begin transaction
-	db, err := s.storage.BeginTx(ctx)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to get member"
-		return resp
-	}
-	defer db.Rollback()
-
-	// Get member by ID
-	member, _, err := db.GetMemberById(ctx, input.MemberId)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
-		resp.Message = "Member not found"
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can revoke permissions"
 		return resp
 	}
 
-	log.Info().
-		Str("traceId", input.TraceId).
-		Int("memberId", input.MemberId).
-		Msg("Member retrieved successfully")
+	output := s.permissionService.RevokePermission(ctx, &permission.RevokePermissionInput{
+		TraceId:    input.TraceId,
+		UserID:     input.TargetUserId,
+		Permission: input.Permission,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		return resp
+	}
 
 	resp.Success = true
-	resp.Message = "Member retrieved successfully"
-	resp.Member = member
-
-	return resp
-}
-
-func (s *service) GetMembersByUserId(ctx context.Context, input *GetMembersByUserIdInput) *GetMembersByUserIdOutput {
-	resp := &GetMembersByUserIdOutput{TraceId: input.TraceId}
-
-	if input.UserId == 0 {
-		log.Warn().Msg("User ID empty")
-		resp.Message = "User ID is mandatory"
-		return resp
-	}
-
-	// Normalize pagination params
-	page := input.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := input.PageSize
-	if pageSize < 1 {
-		pageSize = 10
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
-	offset := (page - 1) * pageSize
-
-	// Begin transaction
-	db, err := s.storage.BeginTx(ctx)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to get member"
-		return resp
-	}
-	defer db.Rollback()
-
-	//Defensive Code
-	// Check if user exists
-	_, err = db.GetUserById(ctx, input.UserId)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
-		resp.Message = "User not found"
-		return resp
-	}
-
-	// Get paginated members for user
-	members, total, err := db.GetMembersByUserId(ctx, input.UserId, pageSize, offset)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
-		resp.Message = "Member not found"
-		return resp
-	}
-
-	totalPages := 0
-	if total > 0 {
-		totalPages = (total + pageSize - 1) / pageSize
-	}
-
-	log.Info().
-		Str("traceId", input.TraceId).
-		Int("userId", input.UserId).
-		Int("page", page).
-		Int("pageSize", pageSize).
-		Int("total", total).
-		Msg("Member retrieved successfully")
-
-	resp.Success = true
-	resp.Message = "Member retrieved successfully"
-	resp.Members = members
-	resp.Total = total
-	resp.TotalPages = totalPages
-	resp.Page = page
-	resp.PageSize = pageSize
-
-	return resp
-}
-
-func (s *service) UpdateMemberInfo(ctx context.Context, input *UpdateMemberInfoInput) *UpdateMemberInfoOutput {
-	resp := &UpdateMemberInfoOutput{TraceId: input.TraceId}
-
-	if input.Id == 0 {
-		log.Warn().Msg("Member ID empty")
-		resp.Message = "Member ID is mandatory"
-		return resp
-	}
-
-	if input.RequesterId == 0 {
-		log.Warn().Msg("Requester ID empty")
-		resp.Message = "Requester ID is mandatory"
-		return resp
-	}
-
-	if input.Name == "" {
-		log.Warn().Msg("Member name empty")
-		resp.Message = "Member name is mandatory"
-		return resp
-	}
-
-	if len(input.Name) < 2 {
-		log.Warn().Msg("Member name too short")
-		resp.Message = "Member name must be at least 2 characters long"
-		return resp
-	}
-
-	if input.MonthlyIncome < 0 {
-		log.Warn().Msg("Monthly income cannot be negative")
-		resp.Message = "Monthly income cannot be negative"
-		return resp
-	}
-
-	db, err := s.storage.BeginTx(ctx)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to update member info"
-		return resp
-	}
-	defer db.Rollback()
-
-	// LOCK ORDERING RULE: Lock user first (hierarchy), then member
-	// This prevents deadlocks when multiple transactions access these tables
-
-	// Step 1: Lock user first (higher in hierarchy)
-	user, errType, err := db.LockUserById(ctx, input.RequesterId)
-	if err != nil {
-		if errType == ErrTypeNotFound {
-			log.Err(err).Str("traceId", input.TraceId).Msg("Requester not found")
-			resp.Message = "Unauthorized update"
-			return resp
-		}
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
-		resp.Message = "Failed to update member info"
-		return resp
-	}
-
-	// Step 2: Lock member (lower in hierarchy)
-	member, errType, err := db.LockMemberById(ctx, input.Id)
-	if err != nil {
-		if errType == ErrTypeNotFound {
-			log.Err(err).Str("traceId", input.TraceId).Msg("Member not found")
-			resp.Message = "Member not found"
-			return resp
-		}
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock member")
-		resp.Message = "Failed to update member info"
-		return resp
-	}
-
-	// Verify ownership using locked entities
-	if member.UserId != user.Id {
-		log.Warn().Str("traceId", input.TraceId).Msg("Unauthorized update")
-		resp.Message = "Unauthorized update"
-		return resp
-	}
-
-	err = db.UpdateMemberInfo(ctx, input.Id, input.Name, input.MonthlyIncome)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update member info")
-		resp.Message = "Failed to update member info"
-		return resp
-	}
-
-	err = db.Commit()
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
-		resp.Message = "Failed to update member info"
-		return resp
-	}
-
-	log.Info().
-		Str("traceId", input.TraceId).
-		Int("memberId", input.Id).
-		Str("name", input.Name).
-		Int("monthlyIncome", input.MonthlyIncome).
-		Msg("Member info updated successfully")
-
-	resp.Success = true
-	resp.Message = "Member info updated successfully"
-
-	return resp
-}
-
-func (s *service) DeleteMember(ctx context.Context, input *DeleteMemberInput) *DeleteMemberOutput {
-	resp := &DeleteMemberOutput{TraceId: input.TraceId}
-
-	if input.Id == 0 {
-		log.Warn().Msg("Member ID empty")
-		resp.Message = "Member ID is mandatory"
-		return resp
-	}
-
-	if input.RequesterId == 0 {
-		log.Warn().Msg("Requester ID empty")
-		resp.Message = "Requester ID is mandatory"
-		return resp
-	}
-
-	db, err := s.storage.BeginTx(ctx)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to delete member"
-		return resp
-	}
-	defer db.Rollback()
-
-	// LOCK ORDERING RULE: Lock user first (hierarchy), then member
-	// This prevents deadlocks when multiple transactions access these tables
-
-	// Step 1: Lock user first (higher in hierarchy)
-	user, errType, err := db.LockUserById(ctx, input.RequesterId)
-	if err != nil {
-		if errType == ErrTypeNotFound {
-			log.Err(err).Str("traceId", input.TraceId).Msg("Requester not found")
-			resp.Message = "Unauthorized delete"
-			return resp
-		}
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
-		resp.Message = "Failed to delete member"
-		return resp
-	}
-
-	// Step 2: Lock member (lower in hierarchy)
-	member, errType, err := db.LockMemberById(ctx, input.Id)
-	if err != nil {
-		if errType == ErrTypeNotFound {
-			log.Info().
-				Str("traceId", input.TraceId).
-				Int("memberId", input.Id).
-				Msg("Member already deleted, returning success")
-			resp.Success = true
-			resp.Message = "Member deleted successfully"
-			return resp
-		}
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock member")
-		resp.Message = "Failed to delete member"
-		return resp
-	}
-
-	// Verify ownership using locked entities
-	if member.UserId != user.Id {
-		log.Warn().Str("traceId", input.TraceId).Msg("Unauthorized delete")
-		resp.Message = "Unauthorized delete"
-		return resp
-	}
-
-	err = db.DeleteMemberById(ctx, input.Id)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to delete member")
-		resp.Message = "Failed to delete member"
-		return resp
-	}
-
-	err = db.Commit()
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
-		resp.Message = "Failed to delete member"
-		return resp
-	}
-
-	log.Info().
-		Str("traceId", input.TraceId).
-		Int("memberId", input.Id).
-		Int("requesterId", input.RequesterId).
-		Msg("Member deleted successfully")
-
-	resp.Success = true
-	resp.Message = "Member deleted successfully"
-
+	resp.Message = "Permission revoked successfully"
 	return resp
 }
