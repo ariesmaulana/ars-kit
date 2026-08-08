@@ -35,23 +35,23 @@ func TestEndToEndDemoRecoversFromCrash(t *testing.T) {
 				// Worker A: acquire + execute step 1, then "crash" before
 				// running anything else. The persisted row now carries user_id
 				// and points at GrantPermission.
-				acquired, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				first, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, acquired)
-				workflow.NewExecutor(engine, app.Store).Execute(context.Background(), acquired)
+				require.Len(t, first, 1)
+				workflow.NewExecutor(engine, app.Store).Execute(context.Background(), first[0])
 
-				persisted, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				persisted, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, persisted, "the next worker must pick the job up again")
-				assert.Equal(t, "GrantPermission", persisted.CurrentStep)
+				require.Len(t, persisted, 1)
+				assert.Equal(t, "GrantPermission", persisted[0].CurrentStep)
 
 				var payload workflow.DemoWorkflowInput
-				require.NoError(t, json.Unmarshal(persisted.Payload, &payload))
+				require.NoError(t, json.Unmarshal(persisted[0].Payload, &payload))
 				assert.Equal(t, int64(7), payload.UserID, "step 1 mutation must survive in the persisted payload")
 
 				// Worker B: a fresh executor with no in-memory state. It must
 				// resume at GrantPermission from the persisted payload alone.
-				workflow.NewExecutor(engine, app.Store).Execute(context.Background(), persisted)
+				workflow.NewExecutor(engine, app.Store).Execute(context.Background(), persisted[0])
 
 				// The grant saw the user created in a previous "process
 				// lifetime" — proof the resume used persisted state.
@@ -59,9 +59,9 @@ func TestEndToEndDemoRecoversFromCrash(t *testing.T) {
 				assert.Equal(t, int64(7), userSvc.grantCalls[0].UserID)
 
 				// Nothing left to acquire → the job completed.
-				nilJob, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				leftover, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				assert.Nil(t, nilJob)
+				assert.Empty(t, leftover)
 
 				done := app.getJob(ctx, t, job.ID)
 				assert.Equal(t, workflow.StatusDone, done.Status)

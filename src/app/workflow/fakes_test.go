@@ -68,17 +68,21 @@ func (f *fakeStore) Insert(ctx context.Context, workflowName, traceID string, pa
 	return e, nil
 }
 
-func (f *fakeStore) AcquireNext(ctx context.Context, staleTimeout time.Duration) (*workflow.Entity, error) {
+func (f *fakeStore) AcquireBatch(ctx context.Context, staleTimeout time.Duration, limit int) ([]*workflow.Entity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.acquires++
+	var batch []*workflow.Entity
 	for _, e := range f.entities {
+		if len(batch) == limit {
+			break
+		}
 		if e.Status == workflow.StatusWaiting {
 			e.Status = workflow.StatusProcessing
-			return e, nil
+			batch = append(batch, e)
 		}
 	}
-	return nil, nil
+	return batch, nil
 }
 
 // entity returns the stored row for id, materialising an empty one on the fly

@@ -251,7 +251,7 @@ Migration lives in `src/app/workflow/sql/` (goose, registered in
 ```go
 type Store interface {
 	Insert(ctx, workflowName, traceID string, payload json.RawMessage, currentStep string) (*Entity, error)
-	AcquireNext(ctx, staleTimeout time.Duration) (*Entity, error)
+	AcquireBatch(ctx, staleTimeout time.Duration, limit int) ([]*Entity, error)
 	AdvanceStep(ctx, id int64, payload json.RawMessage, nextStep string) error
 	Complete(ctx, id int64, payload json.RawMessage) error
 	UpdateRetry(ctx, id int64, retryCount int, lastErr string) error // never touches payload
@@ -293,26 +293,32 @@ never restarts the workflow.
 
 ### Stale reclaim (crash recovery)
 
-There is **no reaper process**. `AcquireNext` treats a `processing` row older
-than `StaleTimeout` as re-acquirable, in the same query as picking up `waiting`
-rows (`FOR UPDATE SKIP LOCKED`). A crashed worker's job is naturally picked up
-on the next poll by any live worker. This is why step idempotency is mandatory:
-two workers can legitimately execute the same step if the first was slow rather
-than crashed.
+There is **no reaper process**. The acquire query treats a `processing` row
+older than `StaleTimeout` as re-acquirable, in the same query as picking up
+`waiting` rows (`FOR UPDATE SKIP LOCKED`). A crashed worker's jobs are
+naturally picked up on the next poll by any live worker. This is why step
+idempotency is mandatory: two workers can legitimately execute the same step if
+the first was slow rather than crashed. `StaleTimeout` must exceed the
+worst-case batch drain (`BatchSize × slowest step`) or a legitimately-draining
+batch can be re-acquired.
 
 ---
 
 ## Worker lifecycle
 
 ```
-worker start → poll immediately → sleep PollInterval → poll → …
+worker start → acquire batch → execute each job → acquire again if batch was
+non-empty → sleep PollInterval only when the queue is empty → …
 ```
 
-Each poll: `AcquireNext` → `Executor.Execute` (synchronously, on a background
-context) → loop. On `ctx` cancellation the worker stops acquiring; the
-currently-executing step runs to completion.
+The loop is a **hot loop**: after draining a non-empty batch the worker acquires
+again immediately, so step-to-step latency is not bound by `PollInterval` — it
+only sleeps when an acquire comes back empty, which keeps it self-limiting
+under load. Each job still executes synchronously on a background context. On
+`ctx` cancellation the worker stops acquiring; the currently-executing step
+runs to completion.
 
-`AcquireNext` query (stale reclaim inline):
+Acquire query (batch + stale reclaim inline):
 
 ```sql
 UPDATE workflow_job
@@ -323,7 +329,7 @@ WHERE id = (
        OR (status = 'processing' AND locked_at < now() - $1::interval)
     ORDER BY created_at
     FOR UPDATE SKIP LOCKED
-    LIMIT 1
+    LIMIT $2
 )
 RETURNING id, workflow_name, trace_id, payload, current_step, retry_count, last_error, locked_at, created_at, updated_at;
 ```
@@ -356,9 +362,10 @@ stuck. Operators drain in-flight jobs before breaking deploys.
 ```go
 type Config struct {
 	Workers      int           // default 3
-	PollInterval time.Duration // default 15s — also the retry delay
-	StaleTimeout time.Duration // default 5m — must exceed the slowest step
+	PollInterval time.Duration // default 5s — idle sleep when queue is empty
+	StaleTimeout time.Duration // default 3m — must exceed BatchSize × slowest step
 	DrainTimeout time.Duration // default 30s — shutdown drain wait
+	BatchSize    int           // default 5 — jobs claimed per poll
 }
 ```
 
@@ -367,9 +374,10 @@ Env vars (loaded in `config/config.go`, applied in `main.go` → `buildApp`):
 | Env var | Unit | Default |
 |---|---|---|
 | `WORKFLOW_WORKERS` | workers | 3 |
-| `WORKFLOW_POLL_INTERVAL` | seconds | 15 |
-| `WORKFLOW_STALE_TIMEOUT` | minutes | 5 |
+| `WORKFLOW_POLL_INTERVAL` | seconds | 5 |
+| `WORKFLOW_STALE_TIMEOUT` | minutes | 3 |
 | `WORKFLOW_DRAIN_TIMEOUT` | seconds | 30 |
+| `WORKFLOW_BATCH_SIZE` | jobs per poll | 5 |
 
 `StaleTimeout` must be comfortably larger than the slowest expected step
 duration, otherwise a second worker may pick up a job whose first worker is

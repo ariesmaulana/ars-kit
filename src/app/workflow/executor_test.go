@@ -21,7 +21,7 @@ func newTestEngine(fs workflow.Store, defs ...*workflow.Definition) *workflow.En
 }
 
 // seedJob inserts a job into the fake store and marks it processing, the state
-// a real worker would have produced via AcquireNext.
+// a real worker would have produced via AcquireBatch.
 func seedJob(t *testing.T, fs *fakeStore, workflowName, traceID, payload, currentStep string, retryCount int) *workflow.Entity {
 	t.Helper()
 	entity, err := fs.Insert(context.Background(), workflowName, traceID, json.RawMessage(payload), currentStep)

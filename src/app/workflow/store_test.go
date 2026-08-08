@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -43,58 +44,75 @@ func TestStoreInsert(t *testing.T) {
 	})
 }
 
-func TestStoreAcquireNext(t *testing.T) {
+func TestStoreAcquireBatch(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
-		suite.Describe(t, "Store AcquireNext", func() {
-			suite.Run(t, "picks up a waiting job and marks it processing", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
-				job, err := app.Store.Insert(ctx, "demo", "trace-1", json.RawMessage(`{}`), "RegisterUser")
-				require.NoError(t, err)
+		suite.Describe(t, "Store AcquireBatch", func() {
+			suite.Run(t, "picks up waiting jobs in a batch and marks them processing", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
+				var ids []int64
+				for i := 0; i < 5; i++ {
+					job, err := app.Store.Insert(ctx, "demo", fmt.Sprintf("trace-%d", i), json.RawMessage(`{}`), "RegisterUser")
+					require.NoError(t, err)
+					ids = append(ids, job.ID)
+				}
 
-				acquired, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				batch, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, acquired)
-				assert.Equal(t, job.ID, acquired.ID)
-				assert.Equal(t, workflow.StatusProcessing, acquired.Status)
+				require.Len(t, batch, 5)
+				for _, e := range batch {
+					assert.Contains(t, ids, e.ID)
+					assert.Equal(t, workflow.StatusProcessing, e.Status)
+				}
+			})
+
+			suite.Run(t, "respects the limit", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
+				for i := 0; i < 5; i++ {
+					_, err := app.Store.Insert(ctx, "demo", fmt.Sprintf("trace-%d", i), json.RawMessage(`{}`), "RegisterUser")
+					require.NoError(t, err)
+				}
+
+				batch, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 3)
+				require.NoError(t, err)
+				require.Len(t, batch, 3)
 			})
 
 			suite.Run(t, "re-acquires a processing job older than staleTimeout", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
 				job, err := app.Store.Insert(ctx, "demo", "trace-1", json.RawMessage(`{}`), "RegisterUser")
 				require.NoError(t, err)
 
-				acquired, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				acquired, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, acquired)
+				require.Len(t, acquired, 1)
 
 				// Simulate a crashed worker: age the lock beyond staleTimeout.
 				_, err = app.Pool.Exec(ctx, "UPDATE workflow_job SET locked_at = now() - interval '10 minutes' WHERE id = $1", job.ID)
 				require.NoError(t, err)
 
-				reclaimed, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				reclaimed, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, reclaimed)
-				assert.Equal(t, job.ID, reclaimed.ID)
-				assert.Equal(t, workflow.StatusProcessing, reclaimed.Status)
-				assert.WithinDuration(t, time.Now(), *reclaimed.LockedAt, time.Minute)
+				require.Len(t, reclaimed, 1)
+				assert.Equal(t, job.ID, reclaimed[0].ID)
+				assert.Equal(t, workflow.StatusProcessing, reclaimed[0].Status)
+				assert.WithinDuration(t, time.Now(), *reclaimed[0].LockedAt, time.Minute)
 			})
 
 			suite.Run(t, "does not re-acquire a fresh processing job", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
 				_, err := app.Store.Insert(ctx, "demo", "trace-1", json.RawMessage(`{}`), "RegisterUser")
 				require.NoError(t, err)
 
-				acquired, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				acquired, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				require.NotNil(t, acquired)
+				require.Len(t, acquired, 1)
 
 				// No waiting jobs, and the processing job is still fresh.
-				again, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+				again, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				assert.Nil(t, again)
+				assert.Empty(t, again)
 			})
 
-			suite.Run(t, "returns nil when nothing is eligible", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
-				job, err := app.Store.AcquireNext(ctx, 5*time.Minute)
+			suite.Run(t, "returns empty when nothing is eligible", func(t *testing.T, ctx context.Context, app *WorkflowApp) {
+				batch, err := app.Store.AcquireBatch(ctx, 3*time.Minute, 5)
 				require.NoError(t, err)
-				assert.Nil(t, job)
+				assert.Empty(t, batch)
 			})
 		})
 	})

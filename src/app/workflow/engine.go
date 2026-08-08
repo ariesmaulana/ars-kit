@@ -32,6 +32,9 @@ func NewEngine(store Store, cfg Config) *Engine {
 	if cfg.DrainTimeout <= 0 {
 		cfg.DrainTimeout = def.DrainTimeout
 	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = def.BatchSize
+	}
 
 	e := &Engine{
 		store:       store,

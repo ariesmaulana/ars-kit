@@ -32,9 +32,10 @@ type Config struct {
 
 	// Workflow engine (PostgreSQL-backed background jobs)
 	WorkflowWorkers         int // Worker goroutines (default: 3)
-	WorkflowPollIntervalSec int // Poll delay in seconds (default: 15)
-	WorkflowStaleTimeoutMin int // Processing lock lifetime in minutes (default: 5)
+	WorkflowPollIntervalSec int // Idle poll delay in seconds (default: 5)
+	WorkflowStaleTimeoutMin int // Processing lock lifetime in minutes (default: 3)
 	WorkflowDrainTimeoutSec int // Shutdown drain wait in seconds (default: 30)
+	WorkflowBatchSize       int // Jobs claimed per poll (default: 5)
 
 	JWTSecret       string
 	CORSAllowOrigin string
@@ -94,7 +95,7 @@ func InitConfig() (*Config, error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
-	cfg.WorkflowPollIntervalSec, err = parseIntEnv("WORKFLOW_POLL_INTERVAL", envs, 15)
+	cfg.WorkflowPollIntervalSec, err = parseIntEnv("WORKFLOW_POLL_INTERVAL", envs, 5)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -103,6 +104,10 @@ func InitConfig() (*Config, error) {
 		errs = append(errs, err)
 	}
 	cfg.WorkflowDrainTimeoutSec, err = parseIntEnv("WORKFLOW_DRAIN_TIMEOUT", envs, 30)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowBatchSize, err = parseIntEnv("WORKFLOW_BATCH_SIZE", envs, 5)
 	if err != nil {
 		errs = append(errs, err)
 	}

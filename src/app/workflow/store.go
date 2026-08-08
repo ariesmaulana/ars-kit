@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,10 +20,11 @@ type Store interface {
 	// registration — the existing payload is never overwritten).
 	Insert(ctx context.Context, workflowName, traceID string, payload json.RawMessage, currentStep string) (*Entity, error)
 
-	// AcquireNext claims one eligible job: a 'waiting' job, or a 'processing'
-	// job whose lock is older than staleTimeout (stale reclaim — no separate
-	// reaper process). Returns nil when nothing is eligible.
-	AcquireNext(ctx context.Context, staleTimeout time.Duration) (*Entity, error)
+	// AcquireBatch claims up to limit eligible jobs: 'waiting' jobs, or
+	// 'processing' jobs whose lock is older than staleTimeout (stale reclaim —
+	// no separate reaper process). Returns an empty slice when nothing is
+	// eligible.
+	AcquireBatch(ctx context.Context, staleTimeout time.Duration, limit int) ([]*Entity, error)
 
 	// AdvanceStep atomically persists the mutated payload and moves the job to
 	// the next step, resetting retry_count and status to 'waiting'.
@@ -86,33 +86,42 @@ RETURNING ` + entityColumns
 	return scanEntity(s.pool.QueryRow(ctx, q, workflowName, traceID, payload, currentStep))
 }
 
-func (s *pgStore) AcquireNext(ctx context.Context, staleTimeout time.Duration) (*Entity, error) {
+func (s *pgStore) AcquireBatch(ctx context.Context, staleTimeout time.Duration, limit int) ([]*Entity, error) {
 	const q = `
 UPDATE workflow_job
 SET status = 'processing',
     locked_at = now(),
     updated_at = now()
-WHERE id = (
+WHERE id IN (
     SELECT id
     FROM workflow_job
     WHERE status = 'waiting'
        OR (status = 'processing' AND locked_at < now() - $1::interval)
     ORDER BY created_at
     FOR UPDATE SKIP LOCKED
-    LIMIT 1
+    LIMIT $2
 )
 RETURNING ` + entityColumns
 
 	interval := pgtype.Interval{Microseconds: staleTimeout.Microseconds(), Valid: true}
-	row := s.pool.QueryRow(ctx, q, interval)
-	e, err := scanEntity(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
+	rows, err := s.pool.Query(ctx, q, interval, limit)
 	if err != nil {
 		return nil, err
 	}
-	return e, nil
+	defer rows.Close()
+
+	var entities []*Entity
+	for rows.Next() {
+		e, err := scanEntity(rows)
+		if err != nil {
+			return nil, err
+		}
+		entities = append(entities, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entities, nil
 }
 
 func (s *pgStore) AdvanceStep(ctx context.Context, id int64, payload json.RawMessage, nextStep string) error {

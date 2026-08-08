@@ -43,6 +43,8 @@ func main() {
 	}
 	defer db.Close()
 
+	app := buildApp(conf, db)
+
 	if len(os.Args) < 2 {
 		usage("")
 		os.Exit(2)
@@ -50,48 +52,62 @@ func main() {
 
 	switch os.Args[1] {
 	case "serve":
-		serve(conf, db)
+		serve(conf, app)
 	case "worker":
-		worker(conf, db)
+		worker(conf, app)
 	default:
 		usage(os.Args[1])
 		os.Exit(2)
 	}
 }
 
-// buildApp wires the foundation and app modules shared by the serve and worker
-// commands: permission, the workflow engine (with its definitions registered
-// and installed as the package default for workflow.Register), and the user
-// service.
-func buildApp(conf *config.Config, db *database.PostgresDB) (*workflow.Engine, user.Service) {
-	// foundation modules — work "globally" or are deps for other modules
+// App holds every constructed service, shared by the serve and worker
+// commands. Adding a module is one field here + one line in buildApp.
+type App struct {
+	WorkflowEngine *workflow.Engine
+
+	UserService user.Service
+	// OtherService other.Service — add app modules here as they appear
+}
+
+// buildApp wires foundation and app modules. Shared by serve and worker so the
+// wiring is written once.
+func buildApp(conf *config.Config, db *database.PostgresDB) *App {
+	//foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
 	permissionStorage := permission.NewStorage(db.Pool)
 	permissionService := permission.NewService(permissionStorage)
 
 	// Workflow engine — PostgreSQL-backed multi-step background jobs. Business
-	// code enqueues jobs through the package-level workflow.Register; workers
-	// poll workflow_job directly and never touch the HTTP layer.
+	// code enqueues jobs through the package-level workflow.Register; the
+	// worker command executes them.
 	workflowEngine := workflow.NewEngine(workflow.NewStore(db.Pool), workflow.Config{
 		Workers:      conf.WorkflowWorkers,
 		PollInterval: time.Duration(conf.WorkflowPollIntervalSec) * time.Second,
 		StaleTimeout: time.Duration(conf.WorkflowStaleTimeoutMin) * time.Minute,
 		DrainTimeout: time.Duration(conf.WorkflowDrainTimeoutSec) * time.Second,
+		BatchSize:    conf.WorkflowBatchSize,
 	})
 
-	// app modules
-	userService := user.NewService(user.NewStorage(db.Pool), permissionService)
+	// end of foundation module
+
+	// App Modules
+	userStorage := user.NewStorage(db.Pool)
+	userService := user.NewService(userStorage, permissionService)
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
 	workflowEngine.Register(workflow.DemoWorkflow(userService))
 	workflow.SetDefault(workflowEngine)
 
-	return workflowEngine, userService
+	return &App{
+		WorkflowEngine: workflowEngine,
+		UserService:    userService,
+	}
 }
 
 // serve runs the HTTP server. Business services enqueue workflow jobs here;
 // the worker command executes them.
-func serve(conf *config.Config, db *database.PostgresDB) {
+func serve(conf *config.Config, app *App) {
 	// Initialize Echo
 	e := echo.New()
 	e.HideBanner = true
@@ -146,10 +162,8 @@ func serve(conf *config.Config, db *database.PostgresDB) {
 		CookieHTTPOnly:  true,
 	}
 
-	_, userService := buildApp(conf, db)
-
 	jwtService := user.NewJWTService(jwtConfig)
-	userHandler := user.NewHandler(userService, jwtService)
+	userHandler := user.NewHandler(app.UserService, jwtService)
 
 	// API v1 group — pass to each domain handler for clean versioning
 	v1 := e.Group("/api/v1")
@@ -195,13 +209,11 @@ func serve(conf *config.Config, db *database.PostgresDB) {
 
 // worker runs the workflow engine workers. Jobs enqueued by the serve process
 // (or any other process) are executed here.
-func worker(conf *config.Config, db *database.PostgresDB) {
-	engine, _ := buildApp(conf, db)
-
+func worker(conf *config.Config, app *App) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		engine.Run(ctx)
+		app.WorkflowEngine.Run(ctx)
 		close(done)
 	}()
 

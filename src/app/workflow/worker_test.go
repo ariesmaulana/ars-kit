@@ -24,7 +24,7 @@ func (c *countingStore) Insert(ctx context.Context, workflowName, traceID string
 	return nil, nil
 }
 
-func (c *countingStore) AcquireNext(ctx context.Context, staleTimeout time.Duration) (*workflow.Entity, error) {
+func (c *countingStore) AcquireBatch(ctx context.Context, staleTimeout time.Duration, limit int) ([]*workflow.Entity, error) {
 	c.mu.Lock()
 	c.acquires++
 	c.mu.Unlock()
