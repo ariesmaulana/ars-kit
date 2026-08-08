@@ -61,6 +61,11 @@ every other permission check.
 
 ## Setting a Permission
 
+The grant/revoke API and the check path take the **bare permission** (e.g.
+`user:profile_update` or `super_user`) plus a user id. The permission module
+builds the `<user_id>:<permission>` key itself before storing or checking, so a
+granted permission always matches a later check.
+
 ### Via the grant API
 
 `POST /api/v1/users/permissions/grant` (actor must hold `<actor_id>:super_user`):
@@ -68,11 +73,12 @@ every other permission check.
 ```json
 {
   "user_id": 5,
-  "permission": "5:user:profile_update"
+  "permission": "user:profile_update"
 }
 ```
 
-The `permission` field must be the **full key including the target user's id**.
+The module stores it as `5:user:profile_update`. Do **not** include the user id
+in the `permission` field — it would be prefixed again.
 
 ### Directly in SQL
 
@@ -82,8 +88,10 @@ VALUES (5, '5:user:profile_update')
 ON CONFLICT DO NOTHING;
 ```
 
-Granting is idempotent — re-granting an existing permission is a no-op.
-Revoking (`POST /api/v1/users/permissions/revoke`) deletes the row.
+When writing rows directly, store the **full key** (`<user_id>:<permission>`),
+since checks always look it up in that form. Granting via the API is
+idempotent — re-granting an existing permission is a no-op. Revoking
+(`POST /api/v1/users/permissions/revoke`) deletes the row.
 
 ## How Permissions Are Checked
 
@@ -97,8 +105,10 @@ for the module/action constants):
 | `GrantPermission`        | `<actor_id>:super_user`      |
 | `RevokePermission`       | `<actor_id>:super_user`      |
 
-New modules should follow the same convention: define a module name and action
-constants, and check with `<user_id>:<module>:<action>`.
+New modules should follow the same convention: declare every permission the
+module checks as a constant in the module's `const.go` (e.g.
+`src/app/user/const.go`), so callers and readers see the full list in one
+place without grepping string literals.
 
 ## Storage
 

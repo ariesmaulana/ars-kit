@@ -69,7 +69,7 @@ func TestUserGrantPermission(t *testing.T) {
 
 				// For successful grant, verify permission was added
 				assert.Equal(t, len(initialPerms)+1, len(afterPerms), r.name)
-				assert.Contains(t, afterPerms, r.input.permission, r.name)
+				assert.Contains(t, afterPerms, fmt.Sprintf("%d:%s", r.input.userID, r.input.permission), r.name)
 			}
 
 			// ========== 5. Define Rows Runner ==========
@@ -207,8 +207,8 @@ func TestUserCheckPermission(t *testing.T) {
 				}
 
 				// Seed permissions for user 0
-				app.Helper.AddPermission(ctx, t, Users[0].ID, "read:profile")
-				app.Helper.AddPermission(ctx, t, Users[0].ID, "write:profile")
+				app.Helper.AddPermission(ctx, t, Users[0].ID, fmt.Sprintf("%d:read:profile", Users[0].ID))
+				app.Helper.AddPermission(ctx, t, Users[0].ID, fmt.Sprintf("%d:write:profile", Users[0].ID))
 
 				// Seed super_user for user 1 (acts as a wildcard for all checks)
 				app.Helper.AddPermission(ctx, t, Users[1].ID, fmt.Sprintf("%d:super_user", Users[1].ID))
@@ -395,9 +395,9 @@ func TestUserRevokePermission(t *testing.T) {
 				}
 
 				// Seed permissions to revoke
-				app.Helper.AddPermission(ctx, t, Users[0].ID, "read:profile")
-				app.Helper.AddPermission(ctx, t, Users[0].ID, "write:profile")
-				app.Helper.AddPermission(ctx, t, Users[1].ID, "read:profile")
+				app.Helper.AddPermission(ctx, t, Users[0].ID, fmt.Sprintf("%d:read:profile", Users[0].ID))
+				app.Helper.AddPermission(ctx, t, Users[0].ID, fmt.Sprintf("%d:write:profile", Users[0].ID))
+				app.Helper.AddPermission(ctx, t, Users[1].ID, fmt.Sprintf("%d:read:profile", Users[1].ID))
 			})
 
 			// ========== 4. Define Test Runner ==========
@@ -430,7 +430,7 @@ func TestUserRevokePermission(t *testing.T) {
 				// For successful revoke, verify permission was removed (if it existed)
 				assert.Equal(t, len(initialPerms)-r.expected.permsRemoved, len(afterPerms), r.name)
 				if r.expected.permsRemoved > 0 {
-					assert.NotContains(t, afterPerms, r.input.permission, r.name)
+					assert.NotContains(t, afterPerms, fmt.Sprintf("%d:%s", r.input.userID, r.input.permission), r.name)
 				}
 			}
 

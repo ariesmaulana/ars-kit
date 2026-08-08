@@ -473,8 +473,9 @@ createDeniedPermissionCheck := func() *permission.CheckPermissionOutput {
 3. **Stub per row**: always set the stub inside `runtest`, never outside — each
    row controls its own mock.
 4. **Assert mock inputs**: the stub asserts the args passed by the service so the
-   contract is pinned (e.g. permission keys `"7:super_user"`,
-   `"5:user:profile_update"`).
+   contract is pinned (e.g. the user module hands the permission module the
+   bare permission `"user:profile_update"` or `"super_user"`, and the module
+   builds the stored key `"<user_id>:<permission>"` itself).
 
 
 

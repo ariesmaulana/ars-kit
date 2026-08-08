@@ -30,6 +30,21 @@ type Service interface {
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
 }
 
+// ErrorCode categorizes why an operation failed so adapters can map it to an
+// HTTP status without string-matching the human-readable message.
+type ErrorCode string
+
+const (
+	// ErrorCodeValidation covers bad input, missing entities, and duplicates.
+	ErrorCodeValidation ErrorCode = "validation"
+	// ErrorCodeUnauthorized covers bad credentials (e.g. wrong password).
+	ErrorCodeUnauthorized ErrorCode = "unauthorized"
+	// ErrorCodeForbidden covers authenticated users without the required permission.
+	ErrorCodeForbidden ErrorCode = "forbidden"
+	// ErrorCodeInternal covers real system failures (storage, hashing, commit).
+	ErrorCodeInternal ErrorCode = "internal"
+)
+
 // RegisterInput represents input for user registration
 type RegisterInput struct {
 	TraceId  string
@@ -41,10 +56,11 @@ type RegisterInput struct {
 
 // RegisterOutput represents output after user registration
 type RegisterOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	User    User
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
 
 // LoginInput represents input for user login
@@ -56,10 +72,11 @@ type LoginInput struct {
 
 // LoginOutput represents output after user login
 type LoginOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	User    User
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
 
 // UpdateUsernameInput represents input for updating username
@@ -71,10 +88,11 @@ type UpdateUsernameInput struct {
 
 // UpdateUsernameOutput represents output after updating username
 type UpdateUsernameOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	User    User
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
 
 // UpdatePasswordInput represents input for updating password
@@ -87,9 +105,10 @@ type UpdatePasswordInput struct {
 
 // UpdatePasswordOutput represents output after updating password
 type UpdatePasswordOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 // GetProfileByIdInput represents input for getting user profile
@@ -100,27 +119,12 @@ type GetProfileByIdInput struct {
 
 // GetProfileByIdOutput represents output after getting user profile
 type GetProfileByIdOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	User    User
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
-
-// Permission action tokens used in "<user_id>:<module>:<action>" permission strings.
-const (
-	// ModuleUser is how user-module permissions are namespaced.
-	ModuleUser = "user"
-
-	// ActionUpdateProfile gates UpdateUsername.
-	ActionUpdateProfile = "profile_update"
-	// ActionUpdatePassword gates UpdatePassword.
-	ActionUpdatePassword = "password_update"
-
-	// PermissionSuperUser is the special permission that grants a user access
-	// to every action (wildcard) and the right to manage other users'
-	// permissions. It is checked as "<user_id>:super_user".
-	PermissionSuperUser = "super_user"
-)
 
 // GrantPermissionInput represents input for assigning a permission to a user.
 type GrantPermissionInput struct {
@@ -132,9 +136,10 @@ type GrantPermissionInput struct {
 
 // GrantPermissionOutput represents output after assigning a permission.
 type GrantPermissionOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 // RevokePermissionInput represents input for removing a permission from a user.
@@ -147,7 +152,8 @@ type RevokePermissionInput struct {
 
 // RevokePermissionOutput represents output after removing a permission.
 type RevokePermissionOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }

@@ -2,6 +2,11 @@ package permission
 
 import "context"
 
+// PermissionSuperUser is the special permission that grants a user access to
+// every action (wildcard) and the right to manage other users' permissions.
+// It is stored and checked as "<user_id>:super_user".
+const PermissionSuperUser = "super_user"
+
 type Service interface {
 	CheckPermission(ctx context.Context, input *CheckPermissionInput) *CheckPermissionOutput
 	GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput

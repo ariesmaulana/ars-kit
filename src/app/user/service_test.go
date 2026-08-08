@@ -2,7 +2,6 @@ package user_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
@@ -515,7 +514,7 @@ func TestUserUpdateUsername(t *testing.T) {
 
 				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
 					assert.Equal(t, r.input.userID, input.UserID, r.name)
-					assert.Equal(t, fmt.Sprintf("%d:user:profile_update", r.input.userID), input.Permission, r.name)
+					assert.Equal(t, "user:profile_update", input.Permission, r.name)
 					counter.Inc()
 					return r.permissionCheck
 				}
@@ -758,7 +757,7 @@ func TestUserUpdatePassword(t *testing.T) {
 
 				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
 					assert.Equal(t, r.input.userID, input.UserID, r.name)
-					assert.Equal(t, fmt.Sprintf("%d:user:password_update", r.input.userID), input.Permission, r.name)
+					assert.Equal(t, "user:password_update", input.Permission, r.name)
 					counter.Inc()
 					return r.permissionCheck
 				}
@@ -1202,7 +1201,7 @@ func TestUserGrantPermission(t *testing.T) {
 
 				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
 					assert.Equal(t, r.input.actorId, input.UserID, r.name)
-					assert.Equal(t, fmt.Sprintf("%d:super_user", r.input.actorId), input.Permission, r.name)
+					assert.Equal(t, "super_user", input.Permission, r.name)
 					counter.Inc()
 					if r.permissionCheck != nil {
 						return r.permissionCheck
@@ -1446,7 +1445,7 @@ func TestUserRevokePermission(t *testing.T) {
 
 				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
 					assert.Equal(t, r.input.actorId, input.UserID, r.name)
-					assert.Equal(t, fmt.Sprintf("%d:super_user", r.input.actorId), input.Permission, r.name)
+					assert.Equal(t, "super_user", input.Permission, r.name)
 					counter.Inc()
 					if r.permissionCheck != nil {
 						return r.permissionCheck
@@ -1629,5 +1628,3 @@ func TestUserRevokePermission(t *testing.T) {
 		})
 	})
 }
-
-

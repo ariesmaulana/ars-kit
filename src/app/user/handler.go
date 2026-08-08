@@ -2,7 +2,6 @@ package user
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -14,6 +13,22 @@ import (
 type Handler struct {
 	service    Service
 	jwtService *JWTService
+}
+
+// statusForError maps an operation ErrorCode to an HTTP status. Client errors
+// default to 400; only real system failures map to 500. 401/403 stay distinct
+// because end users rely on them.
+func statusForError(code ErrorCode) int {
+	switch code {
+	case ErrorCodeUnauthorized:
+		return http.StatusUnauthorized
+	case ErrorCodeForbidden:
+		return http.StatusForbidden
+	case ErrorCodeInternal:
+		return http.StatusInternalServerError
+	default:
+		return http.StatusBadRequest
+	}
 }
 
 // NewHandler creates a new user handler
@@ -142,6 +157,7 @@ func toUserDTO(user User) UserDTO {
 // @Param user body RegisterRequest true "User registration data"
 // @Success 201 {object} AuthResponse
 // @Failure 400 {object} AuthResponse
+// @Failure 500 {object} AuthResponse
 // @Router /api/v1/users/register [post]
 func (h *Handler) Register(c echo.Context) error {
 	traceID := xid.New().String()
@@ -163,7 +179,7 @@ func (h *Handler) Register(c echo.Context) error {
 	})
 
 	if !output.Success {
-		return c.JSON(http.StatusBadRequest, AuthResponse{
+		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -200,6 +216,7 @@ func (h *Handler) Register(c echo.Context) error {
 // @Success 200 {object} AuthResponse
 // @Failure 400 {object} AuthResponse
 // @Failure 401 {object} AuthResponse
+// @Failure 500 {object} AuthResponse
 // @Router /api/v1/users/login [post]
 func (h *Handler) Login(c echo.Context) error {
 	traceID := xid.New().String()
@@ -219,7 +236,7 @@ func (h *Handler) Login(c echo.Context) error {
 	})
 
 	if !output.Success {
-		return c.JSON(http.StatusUnauthorized, AuthResponse{
+		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -271,7 +288,9 @@ func (h *Handler) Logout(c echo.Context) error {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
 // @Failure 401 {object} UserResponse
+// @Failure 500 {object} UserResponse
 // @Router /api/v1/users/profile [get]
 func (h *Handler) Profile(c echo.Context) error {
 	traceID := xid.New().String()
@@ -290,11 +309,7 @@ func (h *Handler) Profile(c echo.Context) error {
 	})
 
 	if !output.Success {
-		status := http.StatusInternalServerError
-		if output.Message == "User not found" {
-			status = http.StatusNotFound
-		}
-		return c.JSON(status, UserResponse{
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -319,6 +334,8 @@ func (h *Handler) Profile(c echo.Context) error {
 // @Success 200 {object} UserResponse
 // @Failure 400 {object} UserResponse
 // @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
 // @Router /api/v1/users/profile/username [put]
 func (h *Handler) UpdateUsername(c echo.Context) error {
 	traceID := xid.New().String()
@@ -346,7 +363,7 @@ func (h *Handler) UpdateUsername(c echo.Context) error {
 	})
 
 	if !output.Success {
-		return c.JSON(http.StatusBadRequest, UserResponse{
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -371,6 +388,8 @@ func (h *Handler) UpdateUsername(c echo.Context) error {
 // @Success 200 {object} UserResponse
 // @Failure 400 {object} UserResponse
 // @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
 // @Router /api/v1/users/profile/password [put]
 func (h *Handler) UpdatePassword(c echo.Context) error {
 	traceID := xid.New().String()
@@ -399,12 +418,7 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	})
 
 	if !output.Success {
-		status := http.StatusBadRequest
-		if output.Message == "Invalid old password" {
-			status = http.StatusUnauthorized
-		}
-
-		return c.JSON(status, UserResponse{
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -439,6 +453,8 @@ type ManagePermissionResponse struct {
 // @Success 200 {object} ManagePermissionResponse
 // @Failure 400 {object} ManagePermissionResponse
 // @Failure 401 {object} ManagePermissionResponse
+// @Failure 403 {object} ManagePermissionResponse
+// @Failure 500 {object} ManagePermissionResponse
 // @Router /api/v1/users/permissions/grant [post]
 func (h *Handler) GrantPermission(c echo.Context) error {
 	traceID := xid.New().String()
@@ -467,12 +483,7 @@ func (h *Handler) GrantPermission(c echo.Context) error {
 	})
 
 	if !output.Success {
-		status := http.StatusBadRequest
-		if strings.HasPrefix(output.Message, "Unauthorized:") {
-			status = http.StatusForbidden
-		}
-
-		return c.JSON(status, ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
 			Success: false,
 			Message: output.Message,
 		})
@@ -495,6 +506,8 @@ func (h *Handler) GrantPermission(c echo.Context) error {
 // @Success 200 {object} ManagePermissionResponse
 // @Failure 400 {object} ManagePermissionResponse
 // @Failure 401 {object} ManagePermissionResponse
+// @Failure 403 {object} ManagePermissionResponse
+// @Failure 500 {object} ManagePermissionResponse
 // @Router /api/v1/users/permissions/revoke [post]
 func (h *Handler) RevokePermission(c echo.Context) error {
 	traceID := xid.New().String()
@@ -523,12 +536,7 @@ func (h *Handler) RevokePermission(c echo.Context) error {
 	})
 
 	if !output.Success {
-		status := http.StatusBadRequest
-		if strings.HasPrefix(output.Message, "Unauthorized:") {
-			status = http.StatusForbidden
-		}
-
-		return c.JSON(status, ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
 			Success: false,
 			Message: output.Message,
 		})

@@ -105,8 +105,9 @@ func TestHandlerRegister_ServiceFailReturns400(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.RegisterReturns(&user.RegisterOutput{
-		Success: false,
-		Message: "Username or email already exists",
+		Success:   false,
+		Message:   "Username or email already exists",
+		ErrorCode: user.ErrorCodeValidation,
 	})
 
 	body := jsonBody(t, map[string]string{
@@ -165,8 +166,9 @@ func TestHandlerLogin_ServiceFailReturns401(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.LoginReturns(&user.LoginOutput{
-		Success: false,
-		Message: "Invalid username or password",
+		Success:   false,
+		Message:   "Invalid username or password",
+		ErrorCode: user.ErrorCodeUnauthorized,
 	})
 
 	body := jsonBody(t, map[string]string{"username": "bob", "password": "wrong"})
@@ -302,12 +304,13 @@ func TestHandlerUpdateUsername_UserIDFromJWTPassedToService(t *testing.T) {
 	assert.Equal(t, "newname", input.NewUsername)
 }
 
-func TestHandlerUpdateUsername_ServiceFailReturns400(t *testing.T) {
+func TestHandlerUpdateUsername_PermissionDeniedReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.UpdateUsernameReturns(&user.UpdateUsernameOutput{
-		Success: false,
-		Message: "Unauthorized: you do not have permission to update profile",
+		Success:   false,
+		Message:   "Unauthorized: you do not have permission to update profile",
+		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]string{"new_username": "newname"})
@@ -317,7 +320,7 @@ func TestHandlerUpdateUsername_ServiceFailReturns400(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	var resp user.UserResponse
 	decodeJSON(t, rec, &resp)
@@ -368,8 +371,9 @@ func TestHandlerUpdatePassword_InvalidOldPasswordReturns401(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
-		Success: false,
-		Message: "Invalid old password",
+		Success:   false,
+		Message:   "Invalid old password",
+		ErrorCode: user.ErrorCodeUnauthorized,
 	})
 
 	body := jsonBody(t, map[string]string{"old_password": "wrong", "new_password": "newpass123"})
@@ -387,12 +391,13 @@ func TestHandlerUpdatePassword_InvalidOldPasswordReturns401(t *testing.T) {
 	assert.Equal(t, "Invalid old password", resp.Message)
 }
 
-func TestHandlerUpdatePassword_ServiceFailReturns400(t *testing.T) {
+func TestHandlerUpdatePassword_PermissionDeniedReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
-		Success: false,
-		Message: "Unauthorized: you do not have permission to update password",
+		Success:   false,
+		Message:   "Unauthorized: you do not have permission to update password",
+		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]string{"old_password": "oldpass123", "new_password": "newpass123"})
@@ -402,7 +407,7 @@ func TestHandlerUpdatePassword_ServiceFailReturns400(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	var resp user.UserResponse
 	decodeJSON(t, rec, &resp)
@@ -481,8 +486,9 @@ func TestHandlerGrantPermission_ServiceFailReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
-		Success: false,
-		Message: "Unauthorized: only super user can grant permissions",
+		Success:   false,
+		Message:   "Unauthorized: only super user can grant permissions",
+		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
@@ -507,8 +513,9 @@ func TestHandlerGrantPermission_ValidationFailReturns400(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
-		Success: false,
-		Message: "Target user ID is mandatory",
+		Success:   false,
+		Message:   "Target user ID is mandatory",
+		ErrorCode: user.ErrorCodeValidation,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
@@ -603,8 +610,9 @@ func TestHandlerRevokePermission_ServiceFailReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
-		Success: false,
-		Message: "Unauthorized: only super user can revoke permissions",
+		Success:   false,
+		Message:   "Unauthorized: only super user can revoke permissions",
+		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
@@ -629,8 +637,9 @@ func TestHandlerRevokePermission_ValidationFailReturns400(t *testing.T) {
 	e, fake := newHandlerSetup()
 
 	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
-		Success: false,
-		Message: "Permission is mandatory",
+		Success:   false,
+		Message:   "Permission is mandatory",
+		ErrorCode: user.ErrorCodeValidation,
 	})
 
 	body := jsonBody(t, map[string]interface{}{

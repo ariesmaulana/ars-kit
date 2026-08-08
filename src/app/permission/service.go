@@ -9,6 +9,13 @@ import (
 
 var _ Service = (*service)(nil)
 
+// key builds the "<user_id>:<permission>" string stored in the database.
+// Check, grant, and revoke all route through it so a granted permission is
+// always exactly what a later check looks for.
+func key(userID int, permission string) string {
+	return fmt.Sprintf("%d:%s", userID, permission)
+}
+
 type service struct {
 	storage Storage
 }
@@ -43,7 +50,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	}
 	defer db.Rollback()
 
-	has, err := db.HasPermission(ctx, input.UserID, input.Permission)
+	has, err := db.HasPermission(ctx, input.UserID, key(input.UserID, input.Permission))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission")
 		resp.Message = "Failed to check permission"
@@ -53,7 +60,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	// A user holding the "<user_id>:super_user" permission is allowed to do
 	// anything: it acts as a wildcard for every other permission check.
 	if !has {
-		has, err = db.HasPermission(ctx, input.UserID, fmt.Sprintf("%d:super_user", input.UserID))
+		has, err = db.HasPermission(ctx, input.UserID, key(input.UserID, PermissionSuperUser))
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check super user permission")
 			resp.Message = "Failed to check permission"
@@ -93,7 +100,7 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	}
 	defer db.Rollback()
 
-	err = db.AddPermission(ctx, input.UserID, input.Permission)
+	err = db.AddPermission(ctx, input.UserID, key(input.UserID, input.Permission))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to grant permission")
 		resp.Message = "Failed to grant permission"
@@ -138,7 +145,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	}
 	defer db.Rollback()
 
-	err = db.RemovePermission(ctx, input.UserID, input.Permission)
+	err = db.RemovePermission(ctx, input.UserID, key(input.UserID, input.Permission))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to revoke permission")
 		resp.Message = "Failed to revoke permission"
