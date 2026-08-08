@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	ErrMissingToken   = errors.New("missing authentication token")
-	ErrInvalidToken   = errors.New("invalid authentication token")
-	ErrExpiredToken   = errors.New("token has expired")
+	ErrMissingToken = errors.New("missing authentication token")
+	ErrInvalidToken = errors.New("invalid authentication token")
+	ErrExpiredToken = errors.New("token has expired")
 )
 
 // JWTClaims represents the JWT claims
@@ -155,7 +155,7 @@ func (j *JWTService) JWTMiddleware() echo.MiddlewareFunc {
 			if err != nil {
 				status := http.StatusUnauthorized
 				message := "Invalid authentication token"
-				
+
 				if errors.Is(err, ErrExpiredToken) {
 					message = "Token has expired"
 				}

@@ -377,6 +377,39 @@ paths:
       summary: Register a new user
       tags:
       - users
+  /api/v1/users/register-workflow:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Validate the input and enqueue a register_user workflow job.
+        The user is created and granted its permission by background
+        workers instead of synchronously in the request.
+      parameters:
+      - description: User registration data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/user.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+      summary: Register a user asynchronously via the workflow engine
+      tags:
+      - users
 schemes:
 - http
 securityDefinitions:

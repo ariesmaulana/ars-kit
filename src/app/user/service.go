@@ -30,51 +30,8 @@ func NewService(storage Storage, permissionService permission.Service) Service {
 func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterOutput {
 	resp := &RegisterOutput{TraceId: input.TraceId}
 
-	if input.Username == "" {
-		log.Warn().Msg("Username empty")
-		resp.Message = "Username is mandatory"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-
-	if len(input.Username) < 5 {
-		log.Warn().Msg("Username too short")
-		resp.Message = "Username must be at least 5 characters long"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-	if input.Email == "" {
-		log.Warn().Msg("Email empty")
-		resp.Message = "Email is mandatory"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-
-	err := validateEmail(input.Email)
-	if err != nil {
-		log.Warn().Msg("Invalid email")
-		resp.Message = "Invalid email"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-
-	if input.Password == "" {
-		log.Warn().Msg("Password empty")
-		resp.Message = "Password is mandatory"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-
-	if len(input.Password) < 7 {
-		log.Warn().Msg("Password too short")
-		resp.Message = "Password must be at least 7 characters long"
-		resp.ErrorCode = ErrorCodeValidation
-		return resp
-	}
-
-	if input.FullName == "" {
-		log.Warn().Msg("FullName empty")
-		resp.Message = "FullName is mandatory"
+	if msg := validateRegisterInput(input); msg != "" {
+		resp.Message = msg
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -136,6 +93,41 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	resp.Message = "User registered successfully"
 	resp.User = data
 	return resp
+}
+
+// validateRegisterInput returns "" when the input is valid, otherwise the
+// user-facing validation message. Shared by the synchronous Register and the
+// async RegisterAsync so both flows enforce the same rules.
+func validateRegisterInput(input *RegisterInput) string {
+	if input.Username == "" {
+		log.Warn().Msg("Username empty")
+		return "Username is mandatory"
+	}
+	if len(input.Username) < 5 {
+		log.Warn().Msg("Username too short")
+		return "Username must be at least 5 characters long"
+	}
+	if input.Email == "" {
+		log.Warn().Msg("Email empty")
+		return "Email is mandatory"
+	}
+	if err := validateEmail(input.Email); err != nil {
+		log.Warn().Msg("Invalid email")
+		return "Invalid email"
+	}
+	if input.Password == "" {
+		log.Warn().Msg("Password empty")
+		return "Password is mandatory"
+	}
+	if len(input.Password) < 7 {
+		log.Warn().Msg("Password too short")
+		return "Password must be at least 7 characters long"
+	}
+	if input.FullName == "" {
+		log.Warn().Msg("FullName empty")
+		return "FullName is mandatory"
+	}
+	return ""
 }
 
 // Login authenticates a user

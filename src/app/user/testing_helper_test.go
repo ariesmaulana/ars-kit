@@ -263,4 +263,3 @@ func createFailedRevoke() *permission.RevokePermissionOutput {
 		Message: "Failed to revoke permission",
 	}
 }
-

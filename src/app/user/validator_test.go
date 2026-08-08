@@ -282,9 +282,9 @@ func TestValidateEmailEdgeCases(t *testing.T) {
 	t.Run("Maximum valid email length (254 chars)", func(t *testing.T) {
 		// Total length exactly 254 characters
 		// 64 (local) + 1 (@) + 189 (domain including dots and TLD) = 254
-		localPart := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 64 chars
+		localPart := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"                                                                                                                         // 64 chars
 		domainPart := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com" // 189 chars
-		email := localPart + "@" + domainPart // 64 + 1 + 189 = 254
+		email := localPart + "@" + domainPart                                                                                                                                                                   // 64 + 1 + 189 = 254
 		err := validateEmail(email)
 		if err != nil {
 			t.Errorf("Expected 254-char email to be valid, got error: %v (length: %d)", err, len(email))

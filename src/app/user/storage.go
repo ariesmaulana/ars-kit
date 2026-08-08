@@ -109,7 +109,6 @@ func (st *storageTx) UpdatePassword(ctx context.Context, id int, newPassword str
 	return nil
 }
 
-
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
