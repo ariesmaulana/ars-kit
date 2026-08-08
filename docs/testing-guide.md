@@ -425,6 +425,7 @@ runtest := func(t *testing.T, app *UserApp, r *testRow) {
 
 	app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
 		assert.Equal(t, r.input.userID, input.UserID, r.name)
+		assert.Equal(t, "user:profile_update", input.Permission, r.name) // bare permission, no user id
 		counter.Inc()
 		return r.permissionCheck
 	}
@@ -476,6 +477,45 @@ createDeniedPermissionCheck := func() *permission.CheckPermissionOutput {
    contract is pinned (e.g. the user module hands the permission module the
    bare permission `"user:profile_update"` or `"super_user"`, and the module
    builds the stored key `"<user_id>:<permission>"` itself).
+
+## Handler Tests (HTTP adapter)
+
+The HTTP adapter is tested **without a database**: a fresh Echo instance wired
+with the generated `userfakes.ServiceFake`, a real request through the JWT
+middleware, and status assertions driven by `ErrorCode` — never by message
+prose.
+
+```go
+func TestHandlerUpdatePassword_InvalidOldPasswordReturns401(t *testing.T) {
+	e, fake := newHandlerSetup() // Echo + fake service + JWT middleware
+
+	fake.UpdatePasswordReturns(&user.UpdatePasswordOutput{
+		Success:   false,
+		Message:   "Invalid old password",
+		ErrorCode: user.ErrorCodeUnauthorized,
+	})
+
+	body := jsonBody(t, map[string]string{"old_password": "wrong", "new_password": "newpass123"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/password", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+```
+
+Rules:
+
+1. **Status comes from `ErrorCode`, never from matching `Message`.** The
+   handler maps codes once via `statusForError` (`validation` → 400,
+   `unauthorized` → 401, `forbidden` → 403, `internal` → 500). Failure fakes
+   must set `ErrorCode`.
+2. **Assert the service input** with `ArgsForCall` when the request→input
+   mapping matters (e.g. actor id from the JWT, `TargetUserId` from the body).
+3. **No DB, no suite** — this seam is the adapter crossing straight into the
+   fake module.
 
 
 
