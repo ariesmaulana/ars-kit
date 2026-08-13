@@ -3,12 +3,14 @@ package user_test
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // smallThrottle returns a login-throttle policy with small values so the
@@ -197,6 +199,80 @@ func TestUserLoginWindowExpiry(t *testing.T) {
 				state := app.Helper.GetLoginState(ctx, t, u.Id)
 				assert.Equal(t, 1, state.FailedAttempts, "counter should restart after the window elapsed")
 				assert.Nil(t, state.LockedUntil)
+			})
+		})
+	})
+}
+
+func TestUserLoginDefaultPolicy(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User Login default policy", func() {
+
+			suite.Runs(t, "Five failed attempts with the production defaults lock the account for 15 minutes", func(t *testing.T, appCtx *testsuite.AppContext) {
+				// initUserApp wires the production default policy: 5 fails
+				// within 15 minutes lock for 15 minutes.
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUserWithHashedPassword(ctx, t, "defaultpolicy", "defaultpolicy@example.com", "Default Policy", "password123")
+
+				for i := 0; i < 5; i++ {
+					out := app.Service.Login(ctx, &user.LoginInput{TraceId: "t", Username: "defaultpolicy", Password: "wrong"})
+					assert.Equal(t, user.ErrorCodeUnauthorized, out.ErrorCode, "attempt %d", i+1)
+				}
+
+				state := app.Helper.GetLoginState(ctx, t, u.Id)
+				assert.Equal(t, 5, state.FailedAttempts, "counter must stop exactly at the threshold")
+				require.NotNil(t, state.LockedUntil)
+				assert.WithinDuration(t, time.Now().UTC().Add(15*time.Minute), *state.LockedUntil, 2*time.Minute,
+					"default lockout should be ~15 minutes")
+
+				// Even the correct password is rejected while locked.
+				out := app.Service.Login(ctx, &user.LoginInput{TraceId: "t", Username: "defaultpolicy", Password: "password123"})
+				assert.False(t, out.Success)
+				assert.Equal(t, user.ErrorCodeLocked, out.ErrorCode)
+				require.NotNil(t, out.LockedUntil)
+				assert.WithinDuration(t, time.Now().UTC().Add(15*time.Minute), *out.LockedUntil, 2*time.Minute)
+			})
+		})
+	})
+}
+
+func TestUserLoginConcurrentFailures(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User Login concurrent failures", func() {
+
+			suite.Runs(t, "Concurrent wrong-password attempts serialize and never under-count below the threshold", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserAppWithThrottle(appCtx, smallThrottle())
+				ctx := context.Background()
+
+				u := app.Helper.InsertUserWithHashedPassword(ctx, t, "concurrent", "concurrent@example.com", "Concurrent", "password123")
+
+				// Fire more failures than the threshold of 3 at once. The row
+				// lock (SELECT ... FOR UPDATE) serializes the counter updates,
+				// so exactly 3 count and the rest are rejected as locked.
+				const attempts = 12
+				results := make([]*user.LoginOutput, attempts)
+				var wg sync.WaitGroup
+				for i := 0; i < attempts; i++ {
+					wg.Add(1)
+					go func(i int) {
+						defer wg.Done()
+						results[i] = app.Service.Login(ctx, &user.LoginInput{TraceId: "t", Username: "concurrent", Password: "wrong"})
+					}(i)
+				}
+				wg.Wait()
+
+				// No result may be a success, and every result is either the
+				// generic failure or the locked response.
+				for i, out := range results {
+					assert.False(t, out.Success, "attempt %d must not succeed", i+1)
+					assert.Contains(t, []user.ErrorCode{user.ErrorCodeUnauthorized, user.ErrorCodeLocked}, out.ErrorCode, "attempt %d", i+1)
+				}
+
+				state := app.Helper.GetLoginState(ctx, t, u.Id)
+				assert.Equal(t, 3, state.FailedAttempts, "counter must stop exactly at the threshold")
+				require.NotNil(t, state.LockedUntil)
 			})
 		})
 	})
