@@ -622,6 +622,7 @@ func (s *service) UpdateEmail(ctx context.Context, input *UpdateEmailInput) *Upd
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
+
 	data, errType, err := db.UpdateEmail(ctx, input.Id, newEmail)
 	if err != nil {
 		if errType == ErrTypeUniqueConstraint {
