@@ -185,6 +185,34 @@ func TestHandlerLogin_ServiceFailReturns401(t *testing.T) {
 	assert.Equal(t, "Invalid username or password", resp.Message)
 }
 
+func TestHandlerLogin_LockedAccountReturns429WithLockoutState(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	lockedUntil := time.Now().Add(15 * time.Minute)
+	fake.LoginReturns(&user.LoginOutput{
+		Success:           false,
+		Message:           "Account temporarily locked. Try again in 15 minute(s).",
+		ErrorCode:         user.ErrorCodeLocked,
+		LockedUntil:       &lockedUntil,
+		RetryAfterSeconds: 900,
+	})
+
+	body := jsonBody(t, map[string]string{"username": "bob", "password": "wrong"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/login", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+
+	var resp user.AuthResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Account temporarily locked. Try again in 15 minute(s).", resp.Message)
+	assert.NotNil(t, resp.LockedUntil)
+	assert.Equal(t, 900, resp.RetryAfterSeconds)
+}
+
 // ──────────────────────────────────────────────────────────────
 // GET /api/v1/users/profile
 // ──────────────────────────────────────────────────────────────

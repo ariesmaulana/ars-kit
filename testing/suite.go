@@ -18,7 +18,6 @@ import (
 type Suite struct {
 	config    *config.Config
 	pool      *pgxpool.Pool
-	schema    string
 	domains   []database.Domain
 	beforeFns []func(*AppContext)
 }
@@ -72,7 +71,6 @@ func (s *Suite) Runs(t *testing.T, scenario string, fn func(t *testing.T, app *A
 
 		// Create random schema for isolation
 		schema := s.createRandomSchema()
-		s.schema = schema
 
 		// Create schema
 		if err := s.createSchema(schema); err != nil {

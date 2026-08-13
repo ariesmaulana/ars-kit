@@ -199,6 +199,28 @@ func (h *TestHelper) GetPool() *pgxpool.Pool {
 	return h.pool
 }
 
+// GetLoginState reads the persisted login-throttle state for a user.
+func (h *TestHelper) GetLoginState(ctx context.Context, t *testing.T, id int) user.LoginState {
+	query := `SELECT failed_login_attempts, last_failed_login_at, locked_until FROM users WHERE id = $1`
+
+	var state user.LoginState
+	err := h.pool.QueryRow(ctx, query, id).Scan(
+		&state.FailedAttempts,
+		&state.LastFailedLoginAt,
+		&state.LockedUntil,
+	)
+	assert.Nil(t, err)
+	return state
+}
+
+// SetLoginState overwrites the persisted login-throttle state for a user,
+// letting tests simulate expired windows and locks without waiting.
+func (h *TestHelper) SetLoginState(ctx context.Context, t *testing.T, id int, state user.LoginState) {
+	query := `UPDATE users SET failed_login_attempts = $1, last_failed_login_at = $2, locked_until = $3 WHERE id = $4`
+	_, err := h.pool.Exec(ctx, query, state.FailedAttempts, state.LastFailedLoginAt, state.LockedUntil, id)
+	assert.Nil(t, err)
+}
+
 // createGrantedPermissionCheck returns a mock result where the user holds the
 // requested permission.
 func createGrantedPermissionCheck() *permission.CheckPermissionOutput {

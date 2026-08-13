@@ -43,6 +43,21 @@ type StorageTx interface {
 	// This implements pessimistic locking to prevent concurrent modifications
 	LockUserById(ctx context.Context, id int) (User, StorageErrorType, error)
 
+	// LockUserLoginState locks a user row for update and returns its persisted
+	// login-throttle state (failed attempts, last failure, lock expiry). Callers
+	// must hold the returned lock while reading and writing the state so
+	// concurrent login attempts for the same account are serialized.
+	LockUserLoginState(ctx context.Context, id int) (LoginState, StorageErrorType, error)
+
+	// RecordFailedLogin persists an incremented failed-attempt counter, the
+	// last-failure timestamp and, when the account just crossed the threshold,
+	// the lock expiry. Callers must hold the row lock (LockUserLoginState).
+	RecordFailedLogin(ctx context.Context, id int, state LoginState) error
+
+	// ResetLoginState clears the failed-attempt counter and lock after a
+	// successful login. Callers must hold the row lock (LockUserLoginState).
+	ResetLoginState(ctx context.Context, id int) error
+
 	// Commit commits the transaction
 	Commit() error
 

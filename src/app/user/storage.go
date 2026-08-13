@@ -133,6 +133,46 @@ func convertUserRow(row pgx.Row) (User, error) {
 	return user, nil
 }
 
+// LockUserLoginState locks the user row for update and returns the persisted
+// login-throttle state. NULL columns are scanned into nil pointers.
+func (st *storageTx) LockUserLoginState(ctx context.Context, id int) (LoginState, StorageErrorType, error) {
+	query := `SELECT failed_login_attempts, last_failed_login_at, locked_until FROM users WHERE id = $1 FOR UPDATE`
+	row := st.tx.QueryRow(ctx, query, id)
+
+	var state LoginState
+	err := row.Scan(&state.FailedAttempts, &state.LastFailedLoginAt, &state.LockedUntil)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LoginState{}, ErrTypeNotFound, fmt.Errorf("failed to lock login state: %w", err)
+		}
+		return LoginState{}, ErrTypeCommon, fmt.Errorf("failed to lock login state: %w", err)
+	}
+	return state, ErrTypeNone, nil
+}
+
+// RecordFailedLogin persists the failed-attempt state computed by the service.
+// Callers must hold the row lock (LockUserLoginState) so concurrent attempts
+// cannot overwrite each other's increments.
+func (st *storageTx) RecordFailedLogin(ctx context.Context, id int, state LoginState) error {
+	query := `UPDATE users SET failed_login_attempts = $1, last_failed_login_at = $2, locked_until = $3 WHERE id = $4`
+	_, err := st.tx.Exec(ctx, query, state.FailedAttempts, state.LastFailedLoginAt, state.LockedUntil, id)
+	if err != nil {
+		return fmt.Errorf("failed to record failed login: %w", err)
+	}
+	return nil
+}
+
+// ResetLoginState clears the failed-attempt counter and lock after a
+// successful login. Callers must hold the row lock (LockUserLoginState).
+func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
+	query := `UPDATE users SET failed_login_attempts = 0, last_failed_login_at = NULL, locked_until = NULL WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to reset login state: %w", err)
+	}
+	return nil
+}
+
 // Commit commits the transaction
 func (st *storageTx) Commit() error {
 	err := st.tx.Commit(context.Background())

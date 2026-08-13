@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 )
@@ -72,6 +73,9 @@ const (
 	ErrorCodeUnauthorized ErrorCode = "unauthorized"
 	// ErrorCodeForbidden covers authenticated users without the required permission.
 	ErrorCodeForbidden ErrorCode = "forbidden"
+	// ErrorCodeLocked covers accounts temporarily locked by repeated failed
+	// login attempts. Clients should surface it as a throttle/retry state.
+	ErrorCodeLocked ErrorCode = "locked"
 	// ErrorCodeInternal covers real system failures (storage, hashing, commit).
 	ErrorCodeInternal ErrorCode = "internal"
 )
@@ -102,12 +106,17 @@ type LoginInput struct {
 }
 
 // LoginOutput represents output after user login
+//
+// When ErrorCode is ErrorCodeLocked, LockedUntil and RetryAfterSeconds expose
+// the lockout state so clients can show when the account unlocks.
 type LoginOutput struct {
-	Success   bool
-	Message   string
-	TraceId   string
-	ErrorCode ErrorCode
-	User      User
+	Success           bool
+	Message           string
+	TraceId           string
+	ErrorCode         ErrorCode
+	User              User
+	LockedUntil       *time.Time
+	RetryAfterSeconds int
 }
 
 // UpdateUsernameInput represents input for updating username

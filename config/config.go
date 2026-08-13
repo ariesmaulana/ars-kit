@@ -39,6 +39,14 @@ type Config struct {
 
 	JWTSecret       string
 	CORSAllowOrigin string
+
+	// Per-account login throttling / lockout. A failed login increments a
+	// persisted counter; failures older than LoginFailedWindowMinutes reset it;
+	// reaching LoginMaxFailedAttempts locks the account for
+	// LoginLockoutMinutes. The counter resets on a successful login.
+	LoginMaxFailedAttempts   int // Consecutive failures before lockout (default: 5)
+	LoginFailedWindowMinutes int // Counting window in minutes (default: 15)
+	LoginLockoutMinutes      int // Lock duration in minutes (default: 15)
 }
 
 // InitConfig loads configuration from .env file (if present) or OS environment.
@@ -112,6 +120,19 @@ func InitConfig() (*Config, error) {
 		errs = append(errs, err)
 	}
 
+	cfg.LoginMaxFailedAttempts, err = parseIntEnv("LOGIN_MAX_FAILED_ATTEMPTS", envs, 5)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.LoginFailedWindowMinutes, err = parseIntEnv("LOGIN_FAILED_WINDOW_MINUTES", envs, 15)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.LoginLockoutMinutes, err = parseIntEnv("LOGIN_LOCKOUT_MINUTES", envs, 15)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -137,6 +158,16 @@ func (c *Config) validate() error {
 		if value == "" {
 			return errors.New("missing required config: " + field)
 		}
+	}
+
+	if c.LoginMaxFailedAttempts <= 0 {
+		return errors.New("invalid config: LOGIN_MAX_FAILED_ATTEMPTS must be positive")
+	}
+	if c.LoginFailedWindowMinutes <= 0 {
+		return errors.New("invalid config: LOGIN_FAILED_WINDOW_MINUTES must be positive")
+	}
+	if c.LoginLockoutMinutes <= 0 {
+		return errors.New("invalid config: LOGIN_LOCKOUT_MINUTES must be positive")
 	}
 
 	return nil

@@ -23,13 +23,15 @@ type Handler struct {
 
 // statusForError maps an operation ErrorCode to an HTTP status. Client errors
 // default to 400; only real system failures map to 500. 401/403 stay distinct
-// because end users rely on them.
+// because end users rely on them; 429 signals a throttled/locked account.
 func statusForError(code ErrorCode) int {
 	switch code {
 	case ErrorCodeUnauthorized:
 		return http.StatusUnauthorized
 	case ErrorCodeForbidden:
 		return http.StatusForbidden
+	case ErrorCodeLocked:
+		return http.StatusTooManyRequests
 	case ErrorCodeInternal:
 		return http.StatusInternalServerError
 	default:
@@ -150,11 +152,16 @@ type PaginationResponse struct {
 }
 
 // AuthResponse represents the HTTP response for authentication operations
+//
+// LockedUntil and RetryAfterSeconds are populated when the account is locked
+// so clients can show when it unlocks instead of guessing from the message.
 type AuthResponse struct {
-	Success bool     `json:"success"`
-	Message string   `json:"message"`
-	Token   string   `json:"token,omitempty"`
-	User    *UserDTO `json:"user,omitempty"`
+	Success           bool       `json:"success"`
+	Message           string     `json:"message"`
+	Token             string     `json:"token,omitempty"`
+	User              *UserDTO   `json:"user,omitempty"`
+	LockedUntil       *time.Time `json:"locked_until,omitempty"`
+	RetryAfterSeconds int        `json:"retry_after_seconds,omitempty"`
 }
 
 // UserResponse represents the HTTP response for user operations
@@ -310,8 +317,10 @@ func (h *Handler) Login(c echo.Context) error {
 
 	if !output.Success {
 		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
-			Success: false,
-			Message: output.Message,
+			Success:           false,
+			Message:           output.Message,
+			LockedUntil:       output.LockedUntil,
+			RetryAfterSeconds: output.RetryAfterSeconds,
 		})
 	}
 

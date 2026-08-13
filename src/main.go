@@ -92,7 +92,11 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 
 	// App Modules
 	userStorage := user.NewStorage(db.Pool)
-	userService := user.NewService(userStorage, permissionService)
+	userService := user.NewService(userStorage, permissionService, user.LoginThrottleConfig{
+		MaxFailedAttempts: conf.LoginMaxFailedAttempts,
+		FailedWindow:      time.Duration(conf.LoginFailedWindowMinutes) * time.Minute,
+		LockoutDuration:   time.Duration(conf.LoginLockoutMinutes) * time.Minute,
+	})
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
