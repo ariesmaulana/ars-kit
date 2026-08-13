@@ -3,6 +3,7 @@ package user_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
@@ -244,6 +245,126 @@ func TestStorageTransactionCommit(t *testing.T) {
 
 				finalCount := app.Helper.CountUsers(ctx, t)
 				assert.Equal(t, initialCount+1, finalCount)
+			})
+		})
+	})
+}
+
+func TestStorageLockUserLoginState(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage LockUserLoginState", func() {
+			suite.Runs(t, "Returns zero state for a fresh user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "freshstate", "fresh@example.com", "Fresh State", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				state, errType, err := tx.LockUserLoginState(ctx, u.Id)
+				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.Equal(t, 0, state.FailedAttempts)
+				assert.Nil(t, state.LastFailedLoginAt)
+				assert.Nil(t, state.LockedUntil)
+			})
+
+			suite.Runs(t, "Returns ErrTypeNotFound for a non-existent user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.LockUserLoginState(ctx, 99999)
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeNotFound, errType)
+			})
+		})
+	})
+}
+
+func TestStorageRecordFailedLogin(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage RecordFailedLogin", func() {
+			suite.Runs(t, "Persists the failed-attempt state when committed", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "recordfail", "record@example.com", "Record Fail", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+
+				now := time.Now().UTC()
+				lockedUntil := now.Add(15 * time.Minute)
+				err = tx.RecordFailedLogin(ctx, u.Id, user.LoginState{
+					FailedAttempts:    2,
+					LastFailedLoginAt: &now,
+					LockedUntil:       &lockedUntil,
+				})
+				assert.Nil(t, err)
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				state := app.Helper.GetLoginState(ctx, t, u.Id)
+				assert.Equal(t, 2, state.FailedAttempts)
+				assert.NotNil(t, state.LastFailedLoginAt)
+				assert.NotNil(t, state.LockedUntil)
+			})
+
+			suite.Runs(t, "Rolls back the state when the transaction is not committed", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "rollbackfail", "rollback@example.com", "Rollback Fail", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+
+				err = tx.RecordFailedLogin(ctx, u.Id, user.LoginState{FailedAttempts: 1})
+				assert.Nil(t, err)
+				tx.Rollback()
+
+				state := app.Helper.GetLoginState(ctx, t, u.Id)
+				assert.Equal(t, 0, state.FailedAttempts, "uncommitted state must not persist")
+			})
+		})
+	})
+}
+
+func TestStorageResetLoginState(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage ResetLoginState", func() {
+			suite.Runs(t, "Clears the counter and lock", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "resetstate", "reset@example.com", "Reset State", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+
+				now := time.Now().UTC()
+				err = tx.RecordFailedLogin(ctx, u.Id, user.LoginState{
+					FailedAttempts:    4,
+					LastFailedLoginAt: &now,
+					LockedUntil:       &now,
+				})
+				assert.Nil(t, err)
+
+				err = tx.ResetLoginState(ctx, u.Id)
+				assert.Nil(t, err)
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				state := app.Helper.GetLoginState(ctx, t, u.Id)
+				assert.Equal(t, 0, state.FailedAttempts)
+				assert.Nil(t, state.LastFailedLoginAt)
+				assert.Nil(t, state.LockedUntil)
 			})
 		})
 	})

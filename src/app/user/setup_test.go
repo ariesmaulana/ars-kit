@@ -42,14 +42,22 @@ func (ts *TestSuite) Setup(fn func(ctx context.Context, app *UserApp)) {
 	})
 }
 
-// initUserApp initializes user app components from the app context.
-// The permission module is mocked (permissionfakes.ServiceFake) so tests can
-// control permission outcomes per test row without a database.
+// initUserApp initializes user app components from the app context with the
+// default login-throttle policy. The permission module is mocked
+// (permissionfakes.ServiceFake) so tests can control permission outcomes per
+// test row without a database.
 func initUserApp(app *testsuite.AppContext) *UserApp {
+	return initUserAppWithThrottle(app, user.DefaultLoginThrottleConfig())
+}
+
+// initUserAppWithThrottle is initUserApp with a caller-provided login-throttle
+// policy so throttle-specific tests can use small, fast windows instead of the
+// 15-minute defaults.
+func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrottleConfig) *UserApp {
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
 	permissionService := &permissionfakes.ServiceFake{}
-	service := user.NewService(storage, permissionService)
+	service := user.NewService(storage, permissionService, throttle)
 
 	return &UserApp{
 		AppContext:        app,

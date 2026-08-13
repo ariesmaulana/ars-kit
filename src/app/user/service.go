@@ -2,6 +2,9 @@ package user
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
@@ -12,17 +15,49 @@ import (
 // Compile-time check to ensure service implements Service interface
 var _ Service = (*service)(nil)
 
+// LoginThrottleConfig configures the per-account login throttle and lockout.
+// Zero values are invalid; use DefaultLoginThrottleConfig for sensible
+// defaults.
+type LoginThrottleConfig struct {
+	// MaxFailedAttempts is the number of consecutive failed logins inside
+	// FailedWindow that locks the account.
+	MaxFailedAttempts int
+	// FailedWindow is the counting window: failures older than this reset the
+	// counter.
+	FailedWindow time.Duration
+	// LockoutDuration is how long the account stays locked once the threshold
+	// is reached.
+	LockoutDuration time.Duration
+}
+
+// DefaultLoginThrottleConfig returns the default policy: 5 failed attempts
+// within 15 minutes lock the account for 15 minutes.
+func DefaultLoginThrottleConfig() LoginThrottleConfig {
+	return LoginThrottleConfig{
+		MaxFailedAttempts: 5,
+		FailedWindow:      15 * time.Minute,
+		LockoutDuration:   15 * time.Minute,
+	}
+}
+
 // service implements the Service interface
 type service struct {
 	storage           Storage
 	permissionService permission.Service
+	throttle          LoginThrottleConfig
 }
 
-// NewService creates a new user service instance
-func NewService(storage Storage, permissionService permission.Service) Service {
+// NewService creates a new user service instance. A zero LoginThrottleConfig
+// falls back to DefaultLoginThrottleConfig so callers that omit the policy
+// still get a sane lockout instead of locking every account after one failure.
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig) Service {
+	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
+		throttle = DefaultLoginThrottleConfig()
+	}
 	return &service{
 		storage:           storage,
 		permissionService: permissionService,
+		throttle:          throttle,
 	}
 }
 
@@ -130,7 +165,15 @@ func validateRegisterInput(input *RegisterInput) string {
 	return ""
 }
 
-// Login authenticates a user
+// Login authenticates a user. Failed attempts are counted per account inside
+// a configurable window; reaching the threshold locks the account for the
+// configured duration. A successful login resets the counter and lock.
+//
+// The whole check-and-update sequence runs inside one explicit transaction
+// (BeginTx ... Commit, with Rollback on every early return). The user row is
+// locked (SELECT ... FOR UPDATE) before the throttle state is read or written,
+// so concurrent login attempts for the same account are serialized and the
+// failed-attempt counter can never under-count below the lockout threshold.
 func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	resp := &LoginOutput{TraceId: input.TraceId}
 
@@ -149,7 +192,7 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
-	// Begin transaction
+	// Begin transaction — every throttle state read/write happens inside it.
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
@@ -171,6 +214,52 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
+	// Lock the row for the rest of the login attempt. Serializing attempts per
+	// account makes the failed-attempt counter updates atomic and prevents a
+	// race where concurrent failures under-count below the threshold.
+	state, errType, err := db.LockUserLoginState(ctx, user.Id)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Info().
+				Str("traceId", input.TraceId).
+				Str("username", input.Username).
+				Msg("User disappeared between reads")
+			resp.Message = "Invalid username or password"
+			resp.ErrorCode = ErrorCodeUnauthorized
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock login state")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	now := time.Now().UTC()
+
+	// Reject while locked without comparing the password or counting the
+	// attempt: brute-force attempts must not burn CPU or extend the lock.
+	if state.LockedUntil != nil && now.Before(*state.LockedUntil) {
+		lockedUntil := *state.LockedUntil
+		retryAfter := int(math.Ceil(lockedUntil.Sub(now).Seconds()))
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		minutes := int(math.Ceil(lockedUntil.Sub(now).Minutes()))
+		if minutes < 1 {
+			minutes = 1
+		}
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("id", user.Id).
+			Str("username", input.Username).
+			Msg("Login blocked: account locked")
+		resp.Message = fmt.Sprintf("Account temporarily locked. Try again in %d minute(s).", minutes)
+		resp.ErrorCode = ErrorCodeLocked
+		resp.LockedUntil = &lockedUntil
+		resp.RetryAfterSeconds = retryAfter
+		return resp
+	}
+
 	// Get stored password
 	storedPassword, err := db.GetUserPassword(ctx, user.Id)
 	if err != nil {
@@ -183,13 +272,39 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	// Verify password
 	err = bcrypt.CompareHashAndPassword([]byte(storedPassword), []byte(input.Password))
 	if err != nil {
-		log.Info().
-			Str("traceId", input.TraceId).
-			Str("username", input.Username).
-			Msg("Invalid password attempt")
+		// Persist the failure (and lock the account when the threshold is hit)
+		// even though the login itself fails. The update is committed so the
+		// counter survives across attempts.
+		newState := s.applyFailedAttempt(state, now)
+		if recordErr := db.RecordFailedLogin(ctx, user.Id, newState); recordErr != nil {
+			log.Err(recordErr).Str("traceId", input.TraceId).Msg("Failed to record failed login")
+		} else if commitErr := db.Commit(); commitErr != nil {
+			log.Err(commitErr).Str("traceId", input.TraceId).Msg("Failed to commit failed login")
+		}
+
+		if newState.LockedUntil != nil && now.Before(*newState.LockedUntil) {
+			log.Warn().
+				Str("traceId", input.TraceId).
+				Int("id", user.Id).
+				Str("username", input.Username).
+				Msg("Account locked after too many failed login attempts")
+		} else {
+			log.Info().
+				Str("traceId", input.TraceId).
+				Int("id", user.Id).
+				Str("username", input.Username).
+				Msg("Invalid password attempt")
+		}
 		resp.Message = "Invalid username or password"
 		resp.ErrorCode = ErrorCodeUnauthorized
 		return resp
+	}
+
+	// Reset the counter and lock on success, then commit.
+	if err := db.ResetLoginState(ctx, user.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to reset login state")
+	} else if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit login")
 	}
 
 	log.Info().
@@ -202,6 +317,37 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	resp.User = user
 
 	return resp
+}
+
+// applyFailedAttempt applies the counting-window policy to a failed login and
+// returns the state to persist. A lock that has already expired gives the
+// account a fresh window; a failure older than the configured window resets
+// the counter; once the counter reaches MaxFailedAttempts the account locks
+// for LockoutDuration.
+func (s *service) applyFailedAttempt(state LoginState, now time.Time) LoginState {
+	// An expired lock unlocks the account and restarts counting.
+	if state.LockedUntil != nil {
+		if now.Before(*state.LockedUntil) {
+			// Still locked: the caller rejects locked accounts before calling,
+			// so treat this as a no-op rather than extending the lock.
+			return state
+		}
+		state.LockedUntil = nil
+		state.FailedAttempts = 0
+	}
+
+	// Failures older than the window reset the counter.
+	if state.LastFailedLoginAt != nil && now.Sub(*state.LastFailedLoginAt) > s.throttle.FailedWindow {
+		state.FailedAttempts = 0
+	}
+
+	state.FailedAttempts++
+	state.LastFailedLoginAt = &now
+	if state.FailedAttempts >= s.throttle.MaxFailedAttempts {
+		lockedUntil := now.Add(s.throttle.LockoutDuration)
+		state.LockedUntil = &lockedUntil
+	}
+	return state
 }
 
 // hasPermission reports whether the acting user holds the given permission,
