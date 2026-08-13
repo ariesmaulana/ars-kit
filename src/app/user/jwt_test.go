@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -49,7 +50,7 @@ func TestJWTService_GenerateToken(t *testing.T) {
 	})
 
 	t.Run("should generate valid token", func(t *testing.T) {
-		token, err := service.GenerateToken(123, "testuser")
+		token, err := service.GenerateToken(123, "testuser", 0)
 
 		assert.NoError(t, err)
 		assert.NotEmpty(t, token)
@@ -61,8 +62,8 @@ func TestJWTService_GenerateToken(t *testing.T) {
 	})
 
 	t.Run("should generate different tokens for different users", func(t *testing.T) {
-		token1, err1 := service.GenerateToken(1, "user1")
-		token2, err2 := service.GenerateToken(2, "user2")
+		token1, err1 := service.GenerateToken(1, "user1", 0)
+		token2, err2 := service.GenerateToken(2, "user2", 0)
 
 		assert.NoError(t, err1)
 		assert.NoError(t, err2)
@@ -77,7 +78,7 @@ func TestJWTService_ValidateToken(t *testing.T) {
 	})
 
 	t.Run("should validate valid token", func(t *testing.T) {
-		token, _ := service.GenerateToken(123, "testuser")
+		token, _ := service.GenerateToken(123, "testuser", 0)
 
 		claims, err := service.ValidateToken(token)
 
@@ -99,7 +100,7 @@ func TestJWTService_ValidateToken(t *testing.T) {
 		wrongService := NewJWTService(JWTConfig{
 			SecretKey: "wrong-secret",
 		})
-		token, _ := wrongService.GenerateToken(123, "testuser")
+		token, _ := wrongService.GenerateToken(123, "testuser", 0)
 
 		claims, err := service.ValidateToken(token)
 
@@ -179,13 +180,14 @@ func TestJWTService_ClearTokenCookie(t *testing.T) {
 		service.ClearTokenCookie(c)
 
 		cookies := rec.Result().Cookies()
-		require.Len(t, cookies, 1)
+		require.Len(t, cookies, 2)
 
-		cookie := cookies[0]
-		assert.Equal(t, "test_token", cookie.Name)
-		assert.Equal(t, "", cookie.Value)
-		assert.Equal(t, -1, cookie.MaxAge)
-		assert.True(t, cookie.HttpOnly)
+		// Both the auth cookie and the refresh cookie are cleared.
+		for _, cookie := range cookies {
+			assert.Equal(t, "", cookie.Value)
+			assert.Equal(t, -1, cookie.MaxAge)
+			assert.True(t, cookie.HttpOnly)
+		}
 	})
 }
 
@@ -275,7 +277,7 @@ func TestJWTService_JWTMiddleware(t *testing.T) {
 	})
 
 	t.Run("should allow valid token", func(t *testing.T) {
-		token, _ := service.GenerateToken(123, "testuser")
+		token, _ := service.GenerateToken(123, "testuser", 0)
 
 		e := echo.New()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -389,5 +391,241 @@ func TestGetUsernameFromContext(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Empty(t, username)
+	})
+}
+
+// ──────────────────────────────────────────────────────────────
+// A5: jti/iss/aud claims, refresh tokens, token-version revocation
+// ──────────────────────────────────────────────────────────────
+
+func TestJWTService_GenerateTokenClaims(t *testing.T) {
+	service := NewJWTService(JWTConfig{
+		SecretKey: "test-secret-key",
+		Issuer:    "custom-issuer",
+		Audience:  "custom-audience",
+	})
+
+	t.Run("should include jti, iss, aud and token_version claims", func(t *testing.T) {
+		token, err := service.GenerateToken(123, "testuser", 7)
+		require.NoError(t, err)
+
+		parsed, err := jwt.ParseWithClaims(token, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+			return []byte("test-secret-key"), nil
+		})
+		require.NoError(t, err)
+
+		claims, ok := parsed.Claims.(*JWTClaims)
+		require.True(t, ok)
+		require.True(t, parsed.Valid)
+
+		assert.NotEmpty(t, claims.ID, "jti must be set")
+		assert.Equal(t, "custom-issuer", claims.Issuer)
+		assert.Equal(t, jwt.ClaimStrings{"custom-audience"}, claims.Audience)
+		assert.Equal(t, 7, claims.TokenVersion)
+		assert.Equal(t, 123, claims.UserId)
+		assert.Equal(t, "testuser", claims.Username)
+	})
+
+	t.Run("should mint a unique jti for every token", func(t *testing.T) {
+		token1, _ := service.GenerateToken(1, "user1", 0)
+		token2, _ := service.GenerateToken(1, "user1", 0)
+
+		parse := func(tokenStr string) *JWTClaims {
+			parsed, err := jwt.ParseWithClaims(tokenStr, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+				return []byte("test-secret-key"), nil
+			})
+			require.NoError(t, err)
+			return parsed.Claims.(*JWTClaims)
+		}
+
+		assert.NotEqual(t, parse(token1).ID, parse(token2).ID)
+	})
+}
+
+func TestJWTService_ValidateTokenRejectsWrongIssuerOrAudience(t *testing.T) {
+	service := NewJWTService(JWTConfig{
+		SecretKey: "test-secret-key",
+		Issuer:    "expected-issuer",
+		Audience:  "expected-audience",
+	})
+	foreign := NewJWTService(JWTConfig{
+		SecretKey: "test-secret-key", // same key, different iss/aud
+		Issuer:    "foreign-issuer",
+		Audience:  "foreign-audience",
+	})
+
+	t.Run("should reject token with wrong issuer", func(t *testing.T) {
+		token, err := foreign.GenerateToken(1, "user1", 0)
+		require.NoError(t, err)
+
+		claims, err := service.ValidateToken(token)
+		assert.Error(t, err)
+		assert.Nil(t, claims)
+	})
+
+	t.Run("should accept token with matching issuer and audience", func(t *testing.T) {
+		token, err := service.GenerateToken(1, "user1", 0)
+		require.NoError(t, err)
+
+		claims, err := service.ValidateToken(token)
+		require.NoError(t, err)
+		assert.Equal(t, 1, claims.UserId)
+	})
+}
+
+func TestJWTService_GenerateRefreshToken(t *testing.T) {
+	service := NewJWTService(JWTConfig{SecretKey: "test-secret"})
+
+	t.Run("should generate unique opaque tokens", func(t *testing.T) {
+		token1, err := service.GenerateRefreshToken()
+		require.NoError(t, err)
+		token2, err := service.GenerateRefreshToken()
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, token1)
+		assert.NotEmpty(t, token2)
+		assert.NotEqual(t, token1, token2)
+	})
+}
+
+func TestJWTService_HashRefreshToken(t *testing.T) {
+	service := NewJWTService(JWTConfig{SecretKey: "test-secret"})
+
+	t.Run("should hash deterministically and differ across tokens", func(t *testing.T) {
+		token, _ := service.GenerateRefreshToken()
+
+		assert.Equal(t, service.HashRefreshToken(token), service.HashRefreshToken(token))
+		assert.Equal(t, 64, len(service.HashRefreshToken(token))) // SHA-256 hex
+		assert.NotEqual(t, service.HashRefreshToken(token), service.HashRefreshToken(token+"x"))
+	})
+}
+
+func TestJWTService_JWTMiddlewareTokenVersion(t *testing.T) {
+	service := NewJWTService(JWTConfig{
+		SecretKey:  "test-secret-key",
+		CookieName: "auth_token",
+	})
+
+	t.Run("should allow token when version matches the user's current version", func(t *testing.T) {
+		service.SetTokenVersionLoader(func(ctx context.Context, userID int) (int, error) {
+			return 3, nil
+		})
+		token, _ := service.GenerateToken(123, "testuser", 3)
+
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		handler := service.JWTMiddleware()(func(c echo.Context) error {
+			return c.String(http.StatusOK, "success")
+		})
+
+		err := handler(c)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, 123, c.Get("user_id"))
+	})
+
+	t.Run("should reject token minted at a stale version (password change)", func(t *testing.T) {
+		service.SetTokenVersionLoader(func(ctx context.Context, userID int) (int, error) {
+			return 4, nil // user's password changed since the token was minted
+		})
+		token, _ := service.GenerateToken(123, "testuser", 3)
+
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		handler := service.JWTMiddleware()(func(c echo.Context) error {
+			return c.String(http.StatusOK, "success")
+		})
+
+		err := handler(c)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+		var response map[string]interface{}
+		json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.False(t, response["success"].(bool))
+		assert.Contains(t, response["message"].(string), "revoked")
+	})
+}
+
+func TestJWTService_SetRefreshTokenCookie(t *testing.T) {
+	service := NewJWTService(JWTConfig{
+		SecretKey:         "test-secret",
+		RefreshCookieName: "refresh_token",
+		CookieHTTPOnly:    true,
+	})
+
+	t.Run("should set refresh cookie with the refresh TTL", func(t *testing.T) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		service.SetRefreshTokenCookie(c, "refresh.jwt.token")
+
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 1)
+
+		cookie := cookies[0]
+		assert.Equal(t, "refresh_token", cookie.Name)
+		assert.Equal(t, "refresh.jwt.token", cookie.Value)
+		assert.Equal(t, int(service.RefreshExpiration().Seconds()), cookie.MaxAge)
+		assert.True(t, cookie.HttpOnly)
+	})
+
+	t.Run("should clear both auth and refresh cookies", func(t *testing.T) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		service.ClearTokenCookie(c)
+
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 2)
+		names := map[string]bool{}
+		for _, cookie := range cookies {
+			names[cookie.Name] = true
+			assert.Equal(t, -1, cookie.MaxAge)
+		}
+		assert.True(t, names["auth_token"])
+		assert.True(t, names["refresh_token"])
+	})
+}
+
+func TestJWTService_ExtractRefreshToken(t *testing.T) {
+	service := NewJWTService(JWTConfig{
+		SecretKey:         "test-secret",
+		RefreshCookieName: "refresh_token",
+	})
+
+	t.Run("should read refresh token from cookie", func(t *testing.T) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: "refresh_token", Value: "refresh.value"})
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		token, err := service.ExtractRefreshToken(c)
+		assert.NoError(t, err)
+		assert.Equal(t, "refresh.value", token)
+	})
+
+	t.Run("should error when no refresh cookie", func(t *testing.T) {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		token, err := service.ExtractRefreshToken(c)
+		assert.Error(t, err)
+		assert.Empty(t, token)
 	})
 }

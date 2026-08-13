@@ -57,7 +57,11 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
 	permissionService := &permissionfakes.ServiceFake{}
-	service := user.NewService(storage, permissionService, throttle)
+	jwtService := user.NewJWTService(user.JWTConfig{
+		SecretKey:       "test-secret",
+		ExpirationHours: 24,
+	})
+	service := user.NewService(storage, permissionService, throttle, jwtService)
 
 	return &UserApp{
 		AppContext:        app,

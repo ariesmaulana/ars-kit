@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"time"
 )
 
 type StorageErrorType string
@@ -14,9 +15,17 @@ const (
 )
 
 // Storage defines the interface for user data access layer
+//
+// Pool-level (non-transactional) reads live here; everything that writes
+// goes through StorageTx so updates participate in a transaction.
 type Storage interface {
 	// BeginTx starts a new database transaction
 	BeginTx(ctx context.Context) (StorageTx, error)
+
+	// GetUserTokenVersion reads a user's current token_version outside a
+	// transaction. Used by the JWT middleware to reject tokens minted before
+	// a security event (password change).
+	GetUserTokenVersion(ctx context.Context, id int) (int, error)
 }
 
 // StorageTx defines the interface for transactional user operations
@@ -57,6 +66,32 @@ type StorageTx interface {
 	// ResetLoginState clears the failed-attempt counter and lock after a
 	// successful login. Callers must hold the row lock (LockUserLoginState).
 	ResetLoginState(ctx context.Context, id int) error
+
+	// GetUserTokenVersion reads a user's current token_version within the
+	// transaction.
+	GetUserTokenVersion(ctx context.Context, id int) (int, error)
+
+	// BumpUserTokenVersion increments a user's token_version, invalidating
+	// every access and refresh token issued at an earlier version. Call it on
+	// security-sensitive events (password change).
+	BumpUserTokenVersion(ctx context.Context, id int) error
+
+	// InsertRefreshToken records a newly issued refresh token hash. tokenHash
+	// must be the SHA-256 hash of the opaque token; tokenVersion is a snapshot
+	// of users.token_version at issuance.
+	InsertRefreshToken(ctx context.Context, userID int, tokenHash string, tokenVersion int, expiresAt time.Time) error
+
+	// GetRefreshToken reads a refresh token row by its hash, locking it FOR
+	// UPDATE so concurrent refreshes with the same token cannot both rotate
+	// it. Any error (including pgx.ErrNoRows) means the token is unknown.
+	GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error)
+
+	// RevokeRefreshToken marks a refresh token row revoked by id.
+	RevokeRefreshToken(ctx context.Context, id int) error
+
+	// RevokeAllUserRefreshTokens marks every active refresh token of a user
+	// revoked (cleanup when token_version is bumped).
+	RevokeAllUserRefreshTokens(ctx context.Context, userID int) error
 
 	// Commit commits the transaction
 	Commit() error

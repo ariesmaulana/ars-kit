@@ -4,6 +4,8 @@ definitions:
     properties:
       message:
         type: string
+      refresh_token:
+        type: string
       success:
         type: boolean
       token:
@@ -38,6 +40,11 @@ definitions:
       success:
         type: boolean
     type: object
+  user.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    type: object
   user.RegisterRequest:
     properties:
       email:
@@ -57,6 +64,13 @@ definitions:
     - password
     - username
     type: object
+  user.UpdateEmailRequest:
+    properties:
+      new_email:
+        type: string
+    required:
+    - new_email
+    type: object
   user.UpdatePasswordRequest:
     properties:
       new_password:
@@ -67,6 +81,13 @@ definitions:
     required:
     - new_password
     - old_password
+    type: object
+  user.UpdateProfileRequest:
+    properties:
+      full_name:
+        type: string
+    required:
+    - full_name
     type: object
   user.UpdateUsernameRequest:
     properties:
@@ -146,7 +167,16 @@ paths:
     post:
       consumes:
       - application/json
-      description: Clear authentication token
+      description: |-
+        Revoke the refresh token server-side and clear authentication
+        cookies. The refresh token is read from the request body or the
+        refresh cookie.
+      parameters:
+      - description: Refresh token (optional if refresh cookie is sent)
+        in: body
+        name: credentials
+        schema:
+          $ref: '#/definitions/user.RefreshRequest'
       produces:
       - application/json
       responses:
@@ -267,6 +297,91 @@ paths:
       summary: Get user profile
       tags:
       - users
+    put:
+      consumes:
+      - application/json
+      description: Update the authenticated user's profile fields (full_name)
+      parameters:
+      - description: Profile update data
+        in: body
+        name: profile
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update profile
+      tags:
+      - users
+  /api/v1/users/profile/email:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Change the authenticated user's email address. Returns 409 if
+        the address is already in use.
+      parameters:
+      - description: New email
+        in: body
+        name: email
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update email
+      tags:
+      - users
   /api/v1/users/profile/password:
     put:
       consumes:
@@ -345,6 +460,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Update username
+      tags:
+      - users
+  /api/v1/users/refresh:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Exchange a refresh token for a fresh access + refresh pair.
+        The presented refresh token is revoked server-side (rotation),
+        so each refresh token can be used exactly once.
+      parameters:
+      - description: Refresh token (optional if refresh cookie is sent)
+        in: body
+        name: credentials
+        required: true
+        schema:
+          $ref: '#/definitions/user.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.AuthResponse'
+      summary: Rotate refresh token
       tags:
       - users
   /api/v1/users/register:

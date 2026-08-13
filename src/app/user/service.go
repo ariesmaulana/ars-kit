@@ -45,12 +45,16 @@ type service struct {
 	storage           Storage
 	permissionService permission.Service
 	throttle          LoginThrottleConfig
+	jwtService        *JWTService
 }
 
 // NewService creates a new user service instance. A zero LoginThrottleConfig
 // falls back to DefaultLoginThrottleConfig so callers that omit the policy
 // still get a sane lockout instead of locking every account after one failure.
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig) Service {
+// jwtService issues access and refresh tokens; the service persists every
+// refresh token hash it hands out so rotation and revocation are enforced
+// server-side.
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
 	}
@@ -58,7 +62,31 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 		storage:           storage,
 		permissionService: permissionService,
 		throttle:          throttle,
+		jwtService:        jwtService,
 	}
+}
+
+// issueTokenPair mints a fresh access + refresh token pair, persists the
+// refresh token hash at the given token_version, and returns both tokens. It
+// must be called inside a transaction the caller commits; on error the caller
+// rolls back.
+func (s *service) issueTokenPair(ctx context.Context, db StorageTx, tokenVersion int, user User) (string, string, error) {
+	accessToken, err := s.jwtService.GenerateToken(user.Id, user.Username, tokenVersion)
+	if err != nil {
+		return "", "", fmt.Errorf("generate access token: %w", err)
+	}
+
+	refreshToken, err := s.jwtService.GenerateRefreshToken()
+	if err != nil {
+		return "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+
+	expiresAt := time.Now().Add(s.jwtService.RefreshExpiration())
+	if err := db.InsertRefreshToken(ctx, user.Id, s.jwtService.HashRefreshToken(refreshToken), tokenVersion, expiresAt); err != nil {
+		return "", "", fmt.Errorf("persist refresh token: %w", err)
+	}
+
+	return accessToken, refreshToken, nil
 }
 
 // Register creates a new user account
@@ -109,6 +137,26 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
+
+	// Issue the access + refresh pair and persist the refresh token hash in
+	// the same transaction, then commit once.
+	tokenVersion, err := db.GetUserTokenVersion(ctx, insertedId)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to get token version")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	accessToken, refreshToken, err := s.issueTokenPair(ctx, db, tokenVersion, data)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to issue token pair")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	resp.AccessToken = accessToken
+	resp.RefreshToken = refreshToken
 
 	err = db.Commit()
 	if err != nil {
@@ -300,17 +348,47 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
-	// Reset the counter and lock on success, then commit.
+	// Reset the counter and lock on success. The commit happens once, after
+	// the refresh token is persisted, so the whole success path is atomic.
 	if err := db.ResetLoginState(ctx, user.Id); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to reset login state")
-	} else if err := db.Commit(); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit login")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
 	}
 
 	log.Info().
 		Str("traceId", input.TraceId).
 		Str("username", input.Username).
 		Msg("User logged in successfully")
+
+	// Issue the access + refresh pair and persist the refresh token hash in
+	// the same transaction. The refresh token is the server-side handle that
+	// rotation and logout revoke.
+	tokenVersion, err := db.GetUserTokenVersion(ctx, user.Id)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to get token version")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	accessToken, refreshToken, err := s.issueTokenPair(ctx, db, tokenVersion, user)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to issue token pair")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	resp.AccessToken = accessToken
+	resp.RefreshToken = refreshToken
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
 
 	resp.Success = true
 	resp.Message = "Login successful"
@@ -564,6 +642,22 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		return resp
 	}
 
+	// A password change invalidates every session: bump token_version so all
+	// access tokens minted at an earlier version are rejected by the JWT
+	// middleware, and revoke every active refresh token server-side.
+	if err := db.BumpUserTokenVersion(ctx, input.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to bump token version")
+		resp.Message = "Failed to update password"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	if err := db.RevokeAllUserRefreshTokens(ctx, input.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke user refresh tokens")
+		resp.Message = "Failed to update password"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	// Commit transaction
 	err = db.Commit()
 	if err != nil {
@@ -723,5 +817,192 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 
 	resp.Success = true
 	resp.Message = "Permission revoked successfully"
+	return resp
+}
+func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutput {
+	resp := &RefreshOutput{TraceId: input.TraceId}
+
+	if input.RefreshToken == "" {
+		log.Warn().Str("traceId", input.TraceId).Msg("Refresh token empty")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to refresh session"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	// Look the token up by hash with a FOR UPDATE row lock so two concurrent
+	// refreshes with the same token cannot both rotate it.
+	tokenHash := s.jwtService.HashRefreshToken(input.RefreshToken)
+	rt, err := db.GetRefreshToken(ctx, tokenHash)
+	if err != nil {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Msg("Refresh token not found")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	if rt.RevokedAt != nil {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("refreshTokenId", rt.Id).
+			Msg("Refresh token already revoked")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	if time.Now().After(rt.ExpiresAt) {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("refreshTokenId", rt.Id).
+			Msg("Refresh token expired")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	user, err := db.GetUserById(ctx, rt.UserId)
+	if err != nil {
+		log.Err(err).
+			Str("traceId", input.TraceId).
+			Int("userId", rt.UserId).
+			Msg("Failed to get refresh token owner")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	currentVersion, err := db.GetUserTokenVersion(ctx, rt.UserId)
+	if err != nil {
+		log.Err(err).
+			Str("traceId", input.TraceId).
+			Int("userId", rt.UserId).
+			Msg("Failed to get user token version")
+		resp.Message = "Failed to refresh session"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	if currentVersion != rt.TokenVersion {
+		// The token predates a security event (e.g. password change) that
+		// invalidated every earlier session.
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", rt.UserId).
+			Int("tokenVersion", rt.TokenVersion).
+			Int("currentVersion", currentVersion).
+			Msg("Refresh token issued at stale token version")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	// Revoke the presented token first, then issue the rotated pair, so a
+	// replayed token can never be used again.
+	if err := db.RevokeRefreshToken(ctx, rt.Id); err != nil {
+		log.Err(err).
+			Str("traceId", input.TraceId).
+			Int("refreshTokenId", rt.Id).
+			Msg("Failed to revoke refresh token")
+		resp.Message = "Failed to refresh session"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	accessToken, refreshToken, err := s.issueTokenPair(ctx, db, currentVersion, user)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to issue rotated token pair")
+		resp.Message = "Failed to refresh session"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to refresh session"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Int("userId", rt.UserId).
+		Msg("Session refreshed")
+
+	resp.Success = true
+	resp.Message = "Session refreshed"
+	resp.User = user
+	resp.AccessToken = accessToken
+	resp.RefreshToken = refreshToken
+	return resp
+}
+
+// Logout revokes the presented refresh token server-side so it cannot be
+// replayed. It is idempotent: an unknown, expired, or already-revoked token
+// still reports success, since the client clears its cookies either way.
+func (s *service) Logout(ctx context.Context, input *LogoutInput) *LogoutOutput {
+	resp := &LogoutOutput{TraceId: input.TraceId}
+
+	if input.RefreshToken == "" {
+		resp.Success = true
+		resp.Message = "Logged out successfully"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to logout"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	tokenHash := s.jwtService.HashRefreshToken(input.RefreshToken)
+	rt, err := db.GetRefreshToken(ctx, tokenHash)
+	if err != nil {
+		// Unknown token: nothing to revoke, still end the session.
+		log.Info().
+			Str("traceId", input.TraceId).
+			Msg("Logout with unknown refresh token")
+		resp.Success = true
+		resp.Message = "Logged out successfully"
+		return resp
+	}
+
+	// Revoking an already-revoked row is a no-op on the outcome, so the
+	// operation stays idempotent.
+	if err := db.RevokeRefreshToken(ctx, rt.Id); err != nil {
+		log.Err(err).
+			Str("traceId", input.TraceId).
+			Int("refreshTokenId", rt.Id).
+			Msg("Failed to revoke refresh token")
+		resp.Message = "Failed to logout"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to logout"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Msg("Logged out successfully")
+
+	resp.Success = true
+	resp.Message = "Logged out successfully"
 	return resp
 }

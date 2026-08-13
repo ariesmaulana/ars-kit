@@ -1,6 +1,11 @@
 package user
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,6 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
+	"github.com/rs/xid"
 )
 
 var (
@@ -16,26 +22,40 @@ var (
 	ErrExpiredToken = errors.New("token has expired")
 )
 
-// JWTClaims represents the JWT claims
+// JWTClaims represents the JWT claims. The access token carries the standard
+// registered claims (jti, iss, aud) plus the identity claims the middleware
+// and handlers rely on. TokenVersion snapshots users.token_version at issuance
+// so the middleware can reject tokens minted before a security event (e.g.
+// password change) without touching the refresh token store.
 type JWTClaims struct {
-	UserId   int    `json:"user_id"`
-	Username string `json:"username"`
+	UserId       int    `json:"user_id"`
+	Username     string `json:"username"`
+	TokenVersion int    `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
 // JWTConfig holds JWT configuration
 type JWTConfig struct {
-	SecretKey       string
-	ExpirationHours int
-	CookieName      string
-	CookieDomain    string
-	CookieSecure    bool
-	CookieHTTPOnly  bool
+	SecretKey              string
+	ExpirationHours        int
+	RefreshExpirationHours int
+	CookieName             string
+	RefreshCookieName      string
+	CookieDomain           string
+	CookieSecure           bool
+	CookieHTTPOnly         bool
+	Issuer                 string
+	Audience               string
 }
 
 // JWTService handles JWT operations
 type JWTService struct {
 	config JWTConfig
+	// tokenVersionLoader, when set, returns the user's current token_version.
+	// The middleware compares it against the claim's version so tokens issued
+	// before a bump (password change) are rejected. Nil disables the check
+	// (tests and callers without storage access).
+	tokenVersionLoader func(ctx context.Context, userID int) (int, error)
 }
 
 // NewJWTService creates a new JWT service
@@ -43,20 +63,49 @@ func NewJWTService(config JWTConfig) *JWTService {
 	if config.ExpirationHours == 0 {
 		config.ExpirationHours = 24 // default 24 hours
 	}
+	if config.RefreshExpirationHours == 0 {
+		config.RefreshExpirationHours = 24 * 7 // default 7 days
+	}
 	if config.CookieName == "" {
 		config.CookieName = "auth_token"
+	}
+	if config.RefreshCookieName == "" {
+		config.RefreshCookieName = "refresh_token"
+	}
+	if config.Issuer == "" {
+		config.Issuer = "ars-kit"
+	}
+	if config.Audience == "" {
+		config.Audience = "ars-kit-api"
 	}
 	return &JWTService{
 		config: config,
 	}
 }
 
-// GenerateToken generates a new JWT token
-func (j *JWTService) GenerateToken(userId int, username string) (string, error) {
+// SetTokenVersionLoader installs the loader the middleware uses to compare a
+// token's token_version claim against the user's current version. Nil (the
+// default) disables the check.
+func (j *JWTService) SetTokenVersionLoader(fn func(ctx context.Context, userID int) (int, error)) {
+	j.tokenVersionLoader = fn
+}
+
+// RefreshExpiration returns the refresh token lifetime.
+func (j *JWTService) RefreshExpiration() time.Duration {
+	return time.Hour * time.Duration(j.config.RefreshExpirationHours)
+}
+
+// GenerateToken generates a new access JWT. The token carries a unique jti,
+// the configured issuer and audience, and the token_version it was issued at.
+func (j *JWTService) GenerateToken(userId int, username string, tokenVersion int) (string, error) {
 	claims := JWTClaims{
-		UserId:   userId,
-		Username: username,
+		UserId:       userId,
+		Username:     username,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        xid.New().String(),
+			Issuer:    j.config.Issuer,
+			Audience:  jwt.ClaimStrings{j.config.Audience},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * time.Duration(j.config.ExpirationHours))),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
@@ -67,6 +116,24 @@ func (j *JWTService) GenerateToken(userId int, username string) (string, error) 
 	return token.SignedString([]byte(j.config.SecretKey))
 }
 
+// GenerateRefreshToken returns a new opaque refresh token: 32 bytes of
+// cryptographic randomness, base64url-encoded. The token itself is never
+// stored; only its SHA-256 hash goes to the database.
+func (j *JWTService) GenerateRefreshToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// HashRefreshToken returns the SHA-256 hex digest of a refresh token. This is
+// the value stored in refresh_tokens.token_hash.
+func (j *JWTService) HashRefreshToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // ValidateToken validates a JWT token and returns the claims
 func (j *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
@@ -74,7 +141,10 @@ func (j *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
 			return nil, ErrInvalidToken
 		}
 		return []byte(j.config.SecretKey), nil
-	})
+	},
+		jwt.WithIssuer(j.config.Issuer),
+		jwt.WithAudience(j.config.Audience),
+	)
 
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
@@ -106,16 +176,33 @@ func (j *JWTService) SetTokenCookie(c echo.Context, token string) {
 	c.SetCookie(cookie)
 }
 
-// ClearTokenCookie clears the authentication cookie
-func (j *JWTService) ClearTokenCookie(c echo.Context) {
+// SetRefreshTokenCookie sets the refresh token as an HTTP cookie
+func (j *JWTService) SetRefreshTokenCookie(c echo.Context, token string) {
 	cookie := &http.Cookie{
-		Name:     j.config.CookieName,
-		Value:    "",
+		Name:     j.config.RefreshCookieName,
+		Value:    token,
 		Path:     "/",
-		MaxAge:   -1,
+		Domain:   j.config.CookieDomain,
+		MaxAge:   int(j.RefreshExpiration().Seconds()),
+		Secure:   j.config.CookieSecure,
 		HttpOnly: j.config.CookieHTTPOnly,
+		SameSite: http.SameSiteStrictMode,
 	}
 	c.SetCookie(cookie)
+}
+
+// ClearTokenCookie clears the authentication and refresh cookies
+func (j *JWTService) ClearTokenCookie(c echo.Context) {
+	for _, name := range []string{j.config.CookieName, j.config.RefreshCookieName} {
+		cookie := &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: j.config.CookieHTTPOnly,
+		}
+		c.SetCookie(cookie)
+	}
 }
 
 // ExtractToken extracts JWT token from Authorization header or cookie
@@ -136,6 +223,17 @@ func (j *JWTService) ExtractToken(c echo.Context) (string, error) {
 		return cookie.Value, nil
 	}
 
+	return "", ErrMissingToken
+}
+
+// ExtractRefreshToken extracts the refresh token from the request body's
+// refresh_token field or the refresh cookie. The body value wins when both
+// are present (a rotated client may hold a newer token than the cookie).
+func (j *JWTService) ExtractRefreshToken(c echo.Context) (string, error) {
+	// Try the refresh cookie first (the standard delivery channel).
+	if cookie, err := c.Cookie(j.config.RefreshCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
 	return "", ErrMissingToken
 }
 
@@ -164,6 +262,19 @@ func (j *JWTService) JWTMiddleware() echo.MiddlewareFunc {
 					"success": false,
 					"message": message,
 				})
+			}
+
+			// Reject access tokens minted before the user's latest
+			// token_version bump (e.g. password change). Without a loader
+			// (tests, standalone use) the check is skipped.
+			if j.tokenVersionLoader != nil {
+				currentVersion, err := j.tokenVersionLoader(c.Request().Context(), claims.UserId)
+				if err != nil || currentVersion != claims.TokenVersion {
+					return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+						"success": false,
+						"message": "Session has been revoked. Please log in again.",
+					})
+				}
 			}
 
 			// Store claims in context for handlers to use

@@ -285,3 +285,39 @@ func createFailedRevoke() *permission.RevokePermissionOutput {
 		Message: "Failed to revoke permission",
 	}
 }
+
+// CountRefreshTokens returns the number of refresh token rows for a user.
+func (h *TestHelper) CountRefreshTokens(ctx context.Context, t *testing.T, userID int) int {
+	var count int
+	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", userID).Scan(&count)
+	assert.Nil(t, err)
+	return count
+}
+
+// CountActiveRefreshTokens returns the number of non-revoked refresh token rows
+// for a user.
+func (h *TestHelper) CountActiveRefreshTokens(ctx context.Context, t *testing.T, userID int) int {
+	var count int
+	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL", userID).Scan(&count)
+	assert.Nil(t, err)
+	return count
+}
+
+// GetRefreshTokenVersion returns the token_version snapshot of the given
+// refresh token hash, or -1 when the row does not exist.
+func (h *TestHelper) GetRefreshTokenVersion(ctx context.Context, t *testing.T, tokenHash string) int {
+	var version int
+	err := h.pool.QueryRow(ctx, "SELECT token_version FROM refresh_tokens WHERE token_hash = $1", tokenHash).Scan(&version)
+	if err != nil {
+		return -1
+	}
+	return version
+}
+
+// GetUserTokenVersion reads the user's current token_version.
+func (h *TestHelper) GetUserTokenVersion(ctx context.Context, t *testing.T, userID int) int {
+	var version int
+	err := h.pool.QueryRow(ctx, "SELECT token_version FROM users WHERE id = $1", userID).Scan(&version)
+	assert.Nil(t, err)
+	return version
+}

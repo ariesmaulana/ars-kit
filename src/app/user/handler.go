@@ -94,6 +94,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	public.POST("/register", h.Register)
 	public.POST("/register-workflow", h.RegisterWorkflow)
 	public.POST("/login", h.Login)
+	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
 
 	// Protected routes
@@ -120,6 +121,12 @@ type RegisterRequest struct {
 type LoginRequest struct {
 	Username string `json:"username" validate:"required"`
 	Password string `json:"password" validate:"required"`
+}
+
+// RefreshRequest represents the HTTP request body for rotating a refresh
+// token. The field is optional: when omitted the refresh cookie is used.
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
 }
 
 // UpdateUsernameRequest represents the HTTP request body for updating username
@@ -152,13 +159,17 @@ type PaginationResponse struct {
 }
 
 // AuthResponse represents the HTTP response for authentication operations
+// (register, login, refresh).
 //
 // LockedUntil and RetryAfterSeconds are populated when the account is locked
 // so clients can show when it unlocks instead of guessing from the message.
+// AccessToken is a short-lived JWT; RefreshToken is an opaque token that can
+// be exchanged once at POST /users/refresh.
 type AuthResponse struct {
 	Success           bool       `json:"success"`
 	Message           string     `json:"message"`
 	Token             string     `json:"token,omitempty"`
+	RefreshToken      string     `json:"refresh_token,omitempty"`
 	User              *UserDTO   `json:"user,omitempty"`
 	LockedUntil       *time.Time `json:"locked_until,omitempty"`
 	RetryAfterSeconds int        `json:"retry_after_seconds,omitempty"`
@@ -220,24 +231,17 @@ func (h *Handler) Register(c echo.Context) error {
 		})
 	}
 
-	// Generate JWT token
-	token, err := h.jwtService.GenerateToken(output.User.Id, output.User.Username)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, AuthResponse{
-			Success: false,
-			Message: "Failed to generate authentication token",
-		})
-	}
-
-	// Set token in cookie
-	h.jwtService.SetTokenCookie(c, token)
+	// Set tokens in cookies (access + refresh)
+	h.jwtService.SetTokenCookie(c, output.AccessToken)
+	h.jwtService.SetRefreshTokenCookie(c, output.RefreshToken)
 
 	dto := toUserDTO(output.User)
 	return c.JSON(http.StatusCreated, AuthResponse{
-		Success: true,
-		Message: "User registered successfully",
-		Token:   token,
-		User:    &dto,
+		Success:      true,
+		Message:      "User registered successfully",
+		Token:        output.AccessToken,
+		RefreshToken: output.RefreshToken,
+		User:         &dto,
 	})
 }
 
@@ -324,36 +328,115 @@ func (h *Handler) Login(c echo.Context) error {
 		})
 	}
 
-	// Generate JWT token
-	token, err := h.jwtService.GenerateToken(output.User.Id, output.User.Username)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, AuthResponse{
-			Success: false,
-			Message: "Failed to generate authentication token",
-		})
-	}
-
-	// Set token in cookie
-	h.jwtService.SetTokenCookie(c, token)
+	// Set tokens in cookies (access + refresh)
+	h.jwtService.SetTokenCookie(c, output.AccessToken)
+	h.jwtService.SetRefreshTokenCookie(c, output.RefreshToken)
 
 	dto := toUserDTO(output.User)
 	return c.JSON(http.StatusOK, AuthResponse{
-		Success: true,
-		Message: "Login successful",
-		Token:   token,
-		User:    &dto,
+		Success:      true,
+		Message:      "Login successful",
+		Token:        output.AccessToken,
+		RefreshToken: output.RefreshToken,
+		User:         &dto,
+	})
+}
+
+// Refresh handles POST /api/v1/users/refresh
+// @Summary Rotate refresh token
+// @Description Exchange a refresh token for a fresh access + refresh pair.
+// @Description The presented refresh token is revoked server-side (rotation),
+// @Description so each refresh token can be used exactly once.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param credentials body RefreshRequest true "Refresh token (optional if refresh cookie is sent)"
+// @Success 200 {object} AuthResponse
+// @Failure 400 {object} AuthResponse
+// @Failure 401 {object} AuthResponse
+// @Failure 500 {object} AuthResponse
+// @Router /api/v1/users/refresh [post]
+func (h *Handler) Refresh(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req RefreshRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, AuthResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	// The body wins when present; otherwise fall back to the refresh cookie.
+	refreshToken := req.RefreshToken
+	if refreshToken == "" {
+		refreshToken, _ = h.jwtService.ExtractRefreshToken(c)
+	}
+
+	output := h.service.Refresh(c.Request().Context(), &RefreshInput{
+		TraceId:      traceID,
+		RefreshToken: refreshToken,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	// Set tokens in cookies (access + refresh)
+	h.jwtService.SetTokenCookie(c, output.AccessToken)
+	h.jwtService.SetRefreshTokenCookie(c, output.RefreshToken)
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, AuthResponse{
+		Success:      true,
+		Message:      "Session refreshed",
+		Token:        output.AccessToken,
+		RefreshToken: output.RefreshToken,
+		User:         &dto,
 	})
 }
 
 // Logout handles POST /api/v1/users/logout
 // @Summary Logout user
-// @Description Clear authentication token
+// @Description Revoke the refresh token server-side and clear authentication
+// @Description cookies. The refresh token is read from the request body or the
+// @Description refresh cookie.
 // @Tags users
 // @Accept json
 // @Produce json
+// @Param credentials body RefreshRequest false "Refresh token (optional if refresh cookie is sent)"
 // @Success 200 {object} UserResponse
 // @Router /api/v1/users/logout [post]
 func (h *Handler) Logout(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req RefreshRequest
+	_ = bindJSON(c, &req)
+
+	refreshToken := req.RefreshToken
+	if refreshToken == "" {
+		refreshToken, _ = h.jwtService.ExtractRefreshToken(c)
+	}
+
+	// Revoke server-side when a refresh token is presented; revoking is
+	// idempotent, so a missing/expired token still ends the client session.
+	if refreshToken != "" {
+		output := h.service.Logout(c.Request().Context(), &LogoutInput{
+			TraceId:      traceID,
+			RefreshToken: refreshToken,
+		})
+		if !output.Success {
+			return c.JSON(statusForError(output.ErrorCode), UserResponse{
+				Success: false,
+				Message: output.Message,
+			})
+		}
+	}
+
 	h.jwtService.ClearTokenCookie(c)
 
 	return c.JSON(http.StatusOK, UserResponse{

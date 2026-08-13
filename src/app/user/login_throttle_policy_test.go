@@ -11,7 +11,7 @@ import (
 // policy returns a *service wired only with a throttle policy. Storage and
 // permission service stay nil: applyFailedAttempt does not touch them.
 func policy(cfg LoginThrottleConfig) *service {
-	return NewService(nil, nil, cfg).(*service)
+	return NewService(nil, nil, cfg, nil).(*service)
 }
 
 func TestNewServiceFallsBackToDefaultThrottle(t *testing.T) {

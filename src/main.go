@@ -66,7 +66,8 @@ func main() {
 type App struct {
 	WorkflowEngine *workflow.Engine
 
-	UserService user.Service
+	UserService    user.Service
+	UserJWTService *user.JWTService
 	// OtherService other.Service — add app modules here as they appear
 }
 
@@ -92,11 +93,26 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 
 	// App Modules
 	userStorage := user.NewStorage(db.Pool)
+
+	// JWT service: shared by the user service (issues token pairs at
+	// login/register/refresh) and the HTTP handler (middleware + cookies).
+	// The middleware token-version loader rejects access tokens minted before
+	// a password change, which bumps users.token_version.
+	jwtService := user.NewJWTService(user.JWTConfig{
+		SecretKey:       conf.JWTSecret,
+		ExpirationHours: 24,
+		CookieName:      "auth_token",
+		CookieDomain:    "",
+		CookieSecure:    conf.AppEnv == "production", // Secure cookies in production (HTTPS only)
+		CookieHTTPOnly:  true,
+	})
+	jwtService.SetTokenVersionLoader(userStorage.GetUserTokenVersion)
+
 	userService := user.NewService(userStorage, permissionService, user.LoginThrottleConfig{
 		MaxFailedAttempts: conf.LoginMaxFailedAttempts,
 		FailedWindow:      time.Duration(conf.LoginFailedWindowMinutes) * time.Minute,
 		LockoutDuration:   time.Duration(conf.LoginLockoutMinutes) * time.Minute,
-	})
+	}, jwtService)
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
@@ -106,6 +122,7 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 	return &App{
 		WorkflowEngine: workflowEngine,
 		UserService:    userService,
+		UserJWTService: jwtService,
 	}
 }
 
@@ -157,16 +174,7 @@ func serve(conf *config.Config, app *App) {
 		return c.String(http.StatusOK, "alive")
 	})
 
-	jwtConfig := user.JWTConfig{
-		SecretKey:       conf.JWTSecret,
-		ExpirationHours: 24,
-		CookieName:      "auth_token",
-		CookieDomain:    "",
-		CookieSecure:    conf.AppEnv == "production", // Secure cookies in production (HTTPS only)
-		CookieHTTPOnly:  true,
-	}
-
-	jwtService := user.NewJWTService(jwtConfig)
+	jwtService := app.UserJWTService
 	userHandler := user.NewHandler(app.UserService, jwtService)
 
 	// API v1 group — pass to each domain handler for clean versioning
