@@ -22,8 +22,9 @@ type Handler struct {
 }
 
 // statusForError maps an operation ErrorCode to an HTTP status. Client errors
-// default to 400; only real system failures map to 500. 401/403 stay distinct
-// because end users rely on them; 429 signals a throttled/locked account.
+// default to 400; only real system failures map to 500. 401/403/409 stay
+// distinct because end users rely on them; 429 signals a throttled/locked
+// account.
 func statusForError(code ErrorCode) int {
 	switch code {
 	case ErrorCodeUnauthorized:
@@ -32,6 +33,8 @@ func statusForError(code ErrorCode) int {
 		return http.StatusForbidden
 	case ErrorCodeLocked:
 		return http.StatusTooManyRequests
+	case ErrorCodeConflict:
+		return http.StatusConflict
 	case ErrorCodeInternal:
 		return http.StatusInternalServerError
 	default:
@@ -100,7 +103,9 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected := users.Group("")
 	protected.Use(h.jwtService.JWTMiddleware())
 	protected.GET("/profile", h.Profile)
+	protected.PUT("/profile", h.UpdateProfile)
 	protected.PUT("/profile/username", h.UpdateUsername)
+	protected.PUT("/profile/email", h.UpdateEmail)
 	protected.PUT("/profile/password", h.UpdatePassword)
 	protected.POST("/permissions/grant", h.GrantPermission)
 	protected.POST("/permissions/revoke", h.RevokePermission)
@@ -131,6 +136,18 @@ type UpdateUsernameRequest struct {
 type UpdatePasswordRequest struct {
 	OldPassword string `json:"old_password" validate:"required"`
 	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+
+// UpdateProfileRequest represents the HTTP request body for updating the
+// profile via PUT /users/profile (currently only full_name).
+type UpdateProfileRequest struct {
+	FullName string `json:"full_name" validate:"required"`
+}
+
+// UpdateEmailRequest represents the HTTP request body for changing the email
+// via PUT /users/profile/email.
+type UpdateEmailRequest struct {
+	NewEmail string `json:"new_email" validate:"required,email"`
 }
 
 // UserDTO represents a user in HTTP responses (without password)
@@ -456,6 +473,118 @@ func (h *Handler) UpdateUsername(c echo.Context) error {
 	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: "Username updated successfully",
+		Data:    &dto,
+	})
+}
+
+// UpdateProfile handles PUT /api/v1/users/profile
+// @Summary Update profile
+// @Description Update the authenticated user's profile fields (full_name)
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param profile body UpdateProfileRequest true "Profile update data"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/profile [put]
+func (h *Handler) UpdateProfile(c echo.Context) error {
+	traceID := xid.New().String()
+
+	userID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req UpdateProfileRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.UpdateProfile(c.Request().Context(), &UpdateProfileInput{
+		TraceId:  traceID,
+		Id:       userID,
+		FullName: req.FullName,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: "Profile updated successfully",
+		Data:    &dto,
+	})
+}
+
+// UpdateEmail handles PUT /api/v1/users/profile/email
+// @Summary Update email
+// @Description Change the authenticated user's email address. Returns 409 if
+// @Description the address is already in use.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param email body UpdateEmailRequest true "New email"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 409 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/profile/email [put]
+func (h *Handler) UpdateEmail(c echo.Context) error {
+	traceID := xid.New().String()
+
+	userID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req UpdateEmailRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.UpdateEmail(c.Request().Context(), &UpdateEmailInput{
+		TraceId:  traceID,
+		Id:       userID,
+		NewEmail: req.NewEmail,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: "Email updated successfully",
 		Data:    &dto,
 	})
 }

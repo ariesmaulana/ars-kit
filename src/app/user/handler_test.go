@@ -702,3 +702,188 @@ func TestHandlerRevokePermission_NoTokenReturns401(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// ──────────────────────────────────────────────────────────────
+// PUT /api/v1/users/profile (full_name)
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerUpdateProfile_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateProfileReturns(&user.UpdateProfileOutput{
+		Success: true,
+		Message: "Profile updated successfully",
+		User: user.User{
+			Id:       5,
+			Username: "carol",
+			Email:    "carol@example.com",
+			FullName: "Carol Anne White",
+		},
+	})
+
+	body := jsonBody(t, map[string]string{"full_name": "Carol Anne White"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Profile updated successfully", resp.Message)
+	assert.Equal(t, 5, resp.Data.Id)
+	assert.Equal(t, "Carol Anne White", resp.Data.FullName)
+}
+
+func TestHandlerUpdateProfile_UserIDFromJWTPassedToService(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateProfileReturns(&user.UpdateProfileOutput{
+		Success: true,
+		Message: "Profile updated successfully",
+		User:    user.User{Id: 99},
+	})
+
+	body := jsonBody(t, map[string]string{"full_name": "New Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(99))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.UpdateProfileArgsForCall(0)
+	assert.Equal(t, 99, input.Id)
+	assert.Equal(t, "New Name", input.FullName)
+}
+
+func TestHandlerUpdateProfile_PermissionDeniedReturns403(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateProfileReturns(&user.UpdateProfileOutput{
+		Success:   false,
+		Message:   "Unauthorized: you do not have permission to update profile",
+		ErrorCode: user.ErrorCodeForbidden,
+	})
+
+	body := jsonBody(t, map[string]string{"full_name": "New Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: you do not have permission to update profile", resp.Message)
+}
+
+func TestHandlerUpdateProfile_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]string{"full_name": "New Name"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// ──────────────────────────────────────────────────────────────
+// PUT /api/v1/users/profile/email
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerUpdateEmail_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateEmailReturns(&user.UpdateEmailOutput{
+		Success: true,
+		Message: "Email updated successfully",
+		User: user.User{
+			Id:       5,
+			Username: "carol",
+			Email:    "carol.new@example.com",
+			FullName: "Carol White",
+		},
+	})
+
+	body := jsonBody(t, map[string]string{"new_email": "carol.new@example.com"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/email", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Email updated successfully", resp.Message)
+	assert.Equal(t, "carol.new@example.com", resp.Data.Email)
+}
+
+func TestHandlerUpdateEmail_UserIDFromJWTPassedToService(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateEmailReturns(&user.UpdateEmailOutput{
+		Success: true,
+		Message: "Email updated successfully",
+		User:    user.User{Id: 99},
+	})
+
+	body := jsonBody(t, map[string]string{"new_email": "new@example.com"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/email", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(99))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.UpdateEmailArgsForCall(0)
+	assert.Equal(t, 99, input.Id)
+	assert.Equal(t, "new@example.com", input.NewEmail)
+}
+
+func TestHandlerUpdateEmail_ConflictReturns409(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateEmailReturns(&user.UpdateEmailOutput{
+		Success:   false,
+		Message:   "Email already in use",
+		ErrorCode: user.ErrorCodeConflict,
+	})
+
+	body := jsonBody(t, map[string]string{"new_email": "taken@example.com"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/email", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Email already in use", resp.Message)
+}
+
+func TestHandlerUpdateEmail_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	body := jsonBody(t, map[string]string{"new_email": "new@example.com"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/email", body)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

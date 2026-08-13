@@ -7,7 +7,8 @@ package user
 // const.go listing every permission the module checks, so callers and readers
 // (humans or LLMs) can see at a glance what exists without grepping strings.
 const (
-	// PermissionUpdateProfile gates UpdateUsername.
+	// PermissionUpdateProfile gates self-service profile updates: username,
+	// full_name, and email changes.
 	PermissionUpdateProfile = "user:profile_update"
 
 	// PermissionUpdatePassword gates UpdatePassword.

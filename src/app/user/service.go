@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -61,9 +62,28 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 	}
 }
 
+// normalizeUsername trims surrounding whitespace. Display case is preserved;
+// uniqueness is enforced case-insensitively by the LOWER(username) index.
+func normalizeUsername(username string) string {
+	return strings.TrimSpace(username)
+}
+
+// normalizeEmail trims and lowercases an email address before storage (M8).
+// Emails are case-insensitive in practice; storing the canonical lowercase
+// form keeps the LOWER(email) unique index and lookups consistent.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // Register creates a new user account
 func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterOutput {
 	resp := &RegisterOutput{TraceId: input.TraceId}
+
+	// Normalize identity fields (M8) before validation and storage: emails
+	// are trimmed + lowercased, usernames trimmed. Uniqueness is enforced
+	// case-insensitively by the LOWER() indexes in the database.
+	input.Username = normalizeUsername(input.Username)
+	input.Email = normalizeEmail(input.Email)
 
 	if msg := validateRegisterInput(input); msg != "" {
 		resp.Message = msg
@@ -382,15 +402,17 @@ func (s *service) hasPermission(ctx context.Context, traceId string, userID int,
 func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput) *UpdateUsernameOutput {
 	resp := &UpdateUsernameOutput{TraceId: input.TraceId}
 
+	newUsername := normalizeUsername(input.NewUsername)
+
 	// Validate input
-	if input.NewUsername == "" {
+	if newUsername == "" {
 		log.Warn().Msg("New username empty")
 		resp.Message = "New username is mandatory"
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
-	if len(input.NewUsername) < 5 {
+	if len(newUsername) < 5 {
 		log.Warn().Msg("New username too short")
 		resp.Message = "Username must be at least 5 characters long"
 		resp.ErrorCode = ErrorCodeValidation
@@ -428,21 +450,19 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 		return resp
 	}
 
-	// Update username
-	err = db.UpdateUsername(ctx, input.Id, input.NewUsername)
+	// Update username; the LOWER(username) index also rejects case-variant
+	// duplicates, which maps to a 409 Conflict instead of a 500 (M3/M8).
+	data, errType, err := db.UpdateUsername(ctx, input.Id, newUsername)
 	if err != nil {
+		if errType == ErrTypeUniqueConstraint {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Username already exists")
+			resp.Message = "Username already exists"
+			resp.ErrorCode = ErrorCodeConflict
+			return resp
+		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update username")
 		resp.Message = "Failed to update username"
 		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-
-	// Get updated user
-	data, err := db.GetUserById(ctx, input.Id)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to get user")
-		resp.Message = "No Username Found"
-		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -458,11 +478,173 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	log.Info().
 		Str("traceId", input.TraceId).
 		Int("id", input.Id).
-		Str("newUsername", input.NewUsername).
+		Str("newUsername", newUsername).
 		Msg("Username updated successfully")
 
 	resp.Success = true
 	resp.Message = "Username updated successfully"
+	resp.User = data
+
+	return resp
+}
+
+// UpdateProfile updates the authenticated user's profile fields (currently
+// full_name).
+func (s *service) UpdateProfile(ctx context.Context, input *UpdateProfileInput) *UpdateProfileOutput {
+	resp := &UpdateProfileOutput{TraceId: input.TraceId}
+
+	fullName := strings.TrimSpace(input.FullName)
+	if fullName == "" {
+		log.Warn().Msg("Full name empty")
+		resp.Message = "Full name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if len(fullName) > 255 {
+		log.Warn().Msg("Full name too long")
+		resp.Message = "Full name must be at most 255 characters long"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.Id, PermissionUpdateProfile) {
+		resp.Message = "Unauthorized: you do not have permission to update profile"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	// Begin transaction
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update profile"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	// Lock user row for update (pessimistic lock)
+	_, errType, err := db.LockUserById(ctx, input.Id)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update profile"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	data, errType, err := db.UpdateFullName(ctx, input.Id, fullName)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update full name")
+		resp.Message = "Failed to update profile"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Commit transaction
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to update profile"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Int("id", input.Id).
+		Str("fullName", fullName).
+		Msg("Profile updated successfully")
+
+	resp.Success = true
+	resp.Message = "Profile updated successfully"
+	resp.User = data
+
+	return resp
+}
+
+// UpdateEmail changes the authenticated user's email address. The new address
+// is normalized (trimmed, lowercased) before storage; the LOWER(email) unique
+// index rejects addresses already in use (case-insensitively) and maps them
+// to ErrorCodeConflict. When a re-verification hook is installed, it runs
+// after the change is committed.
+func (s *service) UpdateEmail(ctx context.Context, input *UpdateEmailInput) *UpdateEmailOutput {
+	resp := &UpdateEmailOutput{TraceId: input.TraceId}
+
+	newEmail := normalizeEmail(input.NewEmail)
+	if err := validateEmail(newEmail); err != nil {
+		log.Warn().Err(err).Msg("Invalid email")
+		resp.Message = "Invalid email"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.Id, PermissionUpdateProfile) {
+		resp.Message = "Unauthorized: you do not have permission to update profile"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	// Begin transaction
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update email"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	// Lock user row for update (pessimistic lock)
+	_, errType, err := db.LockUserById(ctx, input.Id)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update email"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	data, errType, err := db.UpdateEmail(ctx, input.Id, newEmail)
+	if err != nil {
+		if errType == ErrTypeUniqueConstraint {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Email already in use")
+			resp.Message = "Email already in use"
+			resp.ErrorCode = ErrorCodeConflict
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update email")
+		resp.Message = "Failed to update email"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Commit transaction
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to update email"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Int("id", input.Id).
+		Str("newEmail", newEmail).
+		Msg("Email updated successfully")
+
+	resp.Success = true
+	resp.Message = "Email updated successfully"
 	resp.User = data
 
 	return resp

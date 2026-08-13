@@ -34,6 +34,16 @@ type Service interface {
 	// UpdatePassword updates a user's password
 	UpdatePassword(ctx context.Context, input *UpdatePasswordInput) *UpdatePasswordOutput
 
+	// UpdateProfile updates the authenticated user's profile fields
+	// (currently full_name).
+	UpdateProfile(ctx context.Context, input *UpdateProfileInput) *UpdateProfileOutput
+
+	// UpdateEmail changes the authenticated user's email address. The email
+	// is normalized (trimmed, lowercased) before storage and uniqueness is
+	// enforced case-insensitively; a conflicting address yields
+	// ErrorCodeConflict.
+	UpdateEmail(ctx context.Context, input *UpdateEmailInput) *UpdateEmailOutput
+
 	// GetProfileById retrieves a user profile by ID
 	GetProfileById(ctx context.Context, input *GetProfileByIdInput) *GetProfileByIdOutput
 
@@ -67,8 +77,12 @@ type DemoWorkflowOutput struct {
 type ErrorCode string
 
 const (
-	// ErrorCodeValidation covers bad input, missing entities, and duplicates.
+	// ErrorCodeValidation covers bad input, missing entities, and duplicates
+	// that should surface as a client error (defaults to 400).
 	ErrorCodeValidation ErrorCode = "validation"
+	// ErrorCodeConflict covers well-formed requests that collide with existing
+	// data (e.g. changing the email to one already in use) and maps to 409.
+	ErrorCodeConflict ErrorCode = "conflict"
 	// ErrorCodeUnauthorized covers bad credentials (e.g. wrong password).
 	ErrorCodeUnauthorized ErrorCode = "unauthorized"
 	// ErrorCodeForbidden covers authenticated users without the required permission.
@@ -149,6 +163,40 @@ type UpdatePasswordOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// UpdateProfileInput represents input for updating the authenticated user's
+// profile fields.
+type UpdateProfileInput struct {
+	TraceId  string
+	Id       int
+	FullName string
+}
+
+// UpdateProfileOutput represents output after updating the profile.
+type UpdateProfileOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
+}
+
+// UpdateEmailInput represents input for changing the authenticated user's
+// email address.
+type UpdateEmailInput struct {
+	TraceId  string
+	Id       int
+	NewEmail string
+}
+
+// UpdateEmailOutput represents output after changing the email address.
+type UpdateEmailOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
 
 // GetProfileByIdInput represents input for getting user profile

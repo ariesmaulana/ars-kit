@@ -1628,3 +1628,456 @@ func TestUserRevokePermission(t *testing.T) {
 		})
 	})
 }
+
+func TestUserUpdateProfile(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User UpdateProfile", func() {
+
+			var Users []DataUser
+
+			type input struct {
+				userID   int
+				fullName string
+			}
+			type expected struct {
+				success           bool
+				message           string
+				expectedCountMock int
+				fullName          string
+			}
+
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+			}
+
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "testuser1",
+						Email:    "test1@example.com",
+						FullName: "Test User 1",
+						Password: "password123",
+					},
+					{
+						Idx:      1,
+						Username: "testuser2",
+						Email:    "test2@example.com",
+						FullName: "Test User 2",
+						Password: "password123",
+					},
+				}
+
+				for i, userData := range Users {
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					Users[i].Id = insertedUser.Id
+				}
+			})
+
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				counter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.userID, input.UserID, r.name)
+					assert.Equal(t, "user:profile_update", input.Permission, r.name)
+					counter.Inc()
+					return r.permissionCheck
+				}
+
+				initialUsers := app.Helper.GetAllUsers(ctx, t)
+
+				output := app.Service.UpdateProfile(ctx, &user.UpdateProfileInput{
+					TraceId:  "trace-test",
+					Id:       r.input.userID,
+					FullName: r.input.fullName,
+				})
+
+				afterUsers := app.Helper.GetAllUsers(ctx, t)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - permission check call count")
+
+				if r.expected.success == false {
+					assert.Equal(t, initialUsers, afterUsers, r.name+" - no users should be modified")
+					return
+				}
+
+				assert.Equal(t, len(initialUsers), len(afterUsers), r.name)
+				assert.NotZero(t, output.User.Id, r.name)
+				assert.Equal(t, r.expected.fullName, output.User.FullName, r.name)
+
+				updatedUser, exists := afterUsers[r.input.userID]
+				assert.True(t, exists, r.name+" - user should exist in afterUsers")
+				assert.Equal(t, r.expected.fullName, updatedUser.FullName, r.name)
+			}
+
+			suite.Run(t, "UpdateProfile scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				rows := []*testRow{
+					{
+						name: "Should update full name successfully",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: "Updated Full Name",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Profile updated successfully",
+							expectedCountMock: 1,
+							fullName:          "Updated Full Name",
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should trim surrounding whitespace from full name",
+						input: &input{
+							userID:   Users[1].Id,
+							fullName: "  Trimmed Name  ",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Profile updated successfully",
+							expectedCountMock: 1,
+							fullName:          "Trimmed Name",
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail when full name is empty",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: "",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Full name is mandatory",
+							expectedCountMock: 0,
+						},
+					},
+					{
+						name: "Should fail when full name is whitespace only",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: "   ",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Full name is mandatory",
+							expectedCountMock: 0,
+						},
+					},
+					{
+						name: "Should fail when user does not exist",
+						input: &input{
+							userID:   99999,
+							fullName: "Some Name",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "User not found",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail when user does not hold profile_update permission",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: "Some Name",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update profile",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+					{
+						name: "Should fail when permission module cannot confirm the check",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: "Some Name",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update profile",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createFailedPermissionCheck(),
+					},
+				}
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			})
+
+		})
+	})
+}
+
+func TestUserUpdateEmail(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User UpdateEmail", func() {
+
+			var Users []DataUser
+
+			type input struct {
+				userID   int
+				newEmail string
+			}
+			type expected struct {
+				success           bool
+				message           string
+				expectedCountMock int
+				email             string
+			}
+
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+			}
+
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "testuser1",
+						Email:    "test1@example.com",
+						FullName: "Test User 1",
+						Password: "password123",
+					},
+					{
+						Idx:      1,
+						Username: "testuser2",
+						Email:    "test2@example.com",
+						FullName: "Test User 2",
+						Password: "password123",
+					},
+					{
+						Idx:      2,
+						Username: "takenuser",
+						Email:    "taken@example.com",
+						FullName: "Taken User",
+						Password: "password123",
+					},
+				}
+
+				for i, userData := range Users {
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					Users[i].Id = insertedUser.Id
+				}
+			})
+
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				counter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.userID, input.UserID, r.name)
+					assert.Equal(t, "user:profile_update", input.Permission, r.name)
+					counter.Inc()
+					return r.permissionCheck
+				}
+
+				initialUsers := app.Helper.GetAllUsers(ctx, t)
+
+				output := app.Service.UpdateEmail(ctx, &user.UpdateEmailInput{
+					TraceId:  "trace-test",
+					Id:       r.input.userID,
+					NewEmail: r.input.newEmail,
+				})
+
+				afterUsers := app.Helper.GetAllUsers(ctx, t)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - permission check call count")
+
+				if r.expected.success == false {
+					assert.Equal(t, initialUsers, afterUsers, r.name+" - no users should be modified")
+					return
+				}
+
+				assert.Equal(t, len(initialUsers), len(afterUsers), r.name)
+				assert.NotZero(t, output.User.Id, r.name)
+				assert.Equal(t, r.expected.email, output.User.Email, r.name)
+
+				updatedUser, exists := afterUsers[r.input.userID]
+				assert.True(t, exists, r.name+" - user should exist in afterUsers")
+				assert.Equal(t, r.expected.email, updatedUser.Email, r.name)
+			}
+
+			suite.Run(t, "UpdateEmail scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				rows := []*testRow{
+					{
+						name: "Should update email successfully",
+						input: &input{
+							userID:   Users[0].Id,
+							newEmail: "new1@example.com",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Email updated successfully",
+							expectedCountMock: 1,
+							email:             "new1@example.com",
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should normalize email to lowercase on update",
+						input: &input{
+							userID:   Users[1].Id,
+							newEmail: "  NEW2@Example.COM ",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Email updated successfully",
+							expectedCountMock: 1,
+							email:             "new2@example.com",
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail when new email is invalid",
+						input: &input{
+							userID:   Users[0].Id,
+							newEmail: "not-an-email",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Invalid email",
+							expectedCountMock: 0,
+						},
+					},
+					{
+						name: "Should fail with conflict when email is already in use",
+						input: &input{
+							userID:   Users[0].Id,
+							newEmail: "taken@example.com",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Email already in use",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail with conflict on case-variant duplicate email",
+						input: &input{
+							userID:   Users[0].Id,
+							newEmail: "TAKEN@EXAMPLE.COM",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Email already in use",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail when user does not exist",
+						input: &input{
+							userID:   99999,
+							newEmail: "new@example.com",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "User not found",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+					},
+					{
+						name: "Should fail when user does not hold profile_update permission",
+						input: &input{
+							userID:   Users[0].Id,
+							newEmail: "new@example.com",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: you do not have permission to update profile",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+				}
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			})
+
+		})
+	})
+}
+
+func TestUserRegister_NormalizesIdentityFields(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User Register normalization (M8)", func() {
+			suite.Runs(t, "Should trim and lowercase the email before storage", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				output := app.Service.Register(ctx, &user.RegisterInput{
+					TraceId:  "trace-test",
+					Username: "  normalizeuser  ",
+					Email:    "  Mixed.Case@Example.COM ",
+					FullName: "Normalize User",
+					Password: "password123",
+				})
+
+				assert.True(t, output.Success, output.Message)
+				assert.Equal(t, "normalizeuser", output.User.Username)
+				assert.Equal(t, "mixed.case@example.com", output.User.Email)
+			})
+
+			suite.Runs(t, "Should reject a case-variant duplicate email", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUserWithHashedPassword(ctx, t, "firstuser", "same@example.com", "First User", "password123")
+
+				output := app.Service.Register(ctx, &user.RegisterInput{
+					TraceId:  "trace-test",
+					Username: "seconduser",
+					Email:    "SAME@EXAMPLE.COM",
+					FullName: "Second User",
+					Password: "password123",
+				})
+
+				assert.False(t, output.Success)
+				assert.Equal(t, "Username or email already exists", output.Message)
+			})
+		})
+	})
+}
+
+func TestUserLogin_CaseInsensitiveUsername(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User Login with mixed-case username (M8)", func() {
+			suite.Runs(t, "Should log in with a different casing of the stored username", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUserWithHashedPassword(ctx, t, "CaseUser", "case@example.com", "Case User", "password123")
+
+				output := app.Service.Login(ctx, &user.LoginInput{
+					TraceId:  "trace-test",
+					Username: "caseuser",
+					Password: "password123",
+				})
+
+				assert.True(t, output.Success, output.Message)
+				assert.Equal(t, "CaseUser", output.User.Username)
+			})
+		})
+	})
+}

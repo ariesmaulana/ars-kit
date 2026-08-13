@@ -68,6 +68,11 @@ func validateUserIdentity(email, username string) string {
 func (s *service) RegisterUser(ctx context.Context, input *workflow.RegisterUserInput) *workflow.RegisterUserOutput {
 	out := &workflow.RegisterUserOutput{}
 
+	// Normalize identity fields (M8) like the synchronous Register path does,
+	// so workflow-created accounts follow the same uniqueness rules.
+	input.Email = normalizeEmail(input.Email)
+	input.Username = normalizeUsername(input.Username)
+
 	if msg := validateUserIdentity(input.Email, input.Username); msg != "" {
 		out.Message = msg
 		out.ErrorCode = workflow.ErrorCodeValidation
