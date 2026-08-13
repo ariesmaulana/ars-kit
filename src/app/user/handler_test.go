@@ -702,3 +702,132 @@ func TestHandlerRevokePermission_NoTokenReturns401(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// ──────────────────────────────────────────────────────────────
+// GET /api/v1/users/permissions
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerListPermissions_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListPermissionsReturns(&user.ListPermissionsOutput{
+		Success: true,
+		Message: "Permissions retrieved successfully",
+		Direct:  []string{"user:profile_update"},
+		Roles: []user.PermissionRole{
+			{
+				Id:          1,
+				Name:        "admin",
+				Description: "Admin",
+				Permissions: []string{"super_user"},
+			},
+		},
+		Effective: []string{"super_user", "user:profile_update"},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.ListPermissionsResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Permissions retrieved successfully", resp.Message)
+	assert.NotNil(t, resp.Data)
+	assert.Equal(t, 5, resp.Data.UserId)
+	assert.Equal(t, []string{"user:profile_update"}, resp.Data.DirectPermissions)
+	assert.Equal(t, []string{"super_user", "user:profile_update"}, resp.Data.EffectivePermissions)
+	assert.Len(t, resp.Data.Roles, 1)
+	assert.Equal(t, "admin", resp.Data.Roles[0].Name)
+	assert.Equal(t, []string{"super_user"}, resp.Data.Roles[0].Permissions)
+}
+
+func TestHandlerListPermissions_DefaultsToAuthenticatedUser(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListPermissionsReturns(&user.ListPermissionsOutput{
+		Success:   true,
+		Message:   "Permissions retrieved successfully",
+		Direct:    []string{},
+		Roles:     []user.PermissionRole{},
+		Effective: []string{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(9))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.ListPermissionsArgsForCall(0)
+	assert.Equal(t, 9, input.ActorId)
+	assert.Equal(t, 9, input.TargetUserId) // defaults to the actor
+}
+
+func TestHandlerListPermissions_UserIDQueryParamPassed(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListPermissionsReturns(&user.ListPermissionsOutput{
+		Success:   true,
+		Message:   "Permissions retrieved successfully",
+		Direct:    []string{},
+		Roles:     []user.PermissionRole{},
+		Effective: []string{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions?user_id=42", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.ListPermissionsArgsForCall(0)
+	assert.Equal(t, 1, input.ActorId)
+	assert.Equal(t, 42, input.TargetUserId)
+}
+
+func TestHandlerListPermissions_ServiceForbiddenReturns403(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListPermissionsReturns(&user.ListPermissionsOutput{
+		Success:   false,
+		Message:   "Unauthorized: only super user can view other users' permissions",
+		ErrorCode: user.ErrorCodeForbidden,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions?user_id=42", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	var resp user.ListPermissionsResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: only super user can view other users' permissions", resp.Message)
+}
+
+func TestHandlerListPermissions_InvalidUserIDReturns400(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions?user_id=abc", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandlerListPermissions_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/permissions", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

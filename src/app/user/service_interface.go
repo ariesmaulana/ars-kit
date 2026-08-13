@@ -44,6 +44,12 @@ type Service interface {
 	// RevokePermission removes a permission from a target user.
 	// Only a user holding the "<actorId>:super_user" permission may do this.
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+
+	// ListPermissions lists a user's effective permissions (direct grants plus
+	// role-derived permissions). A user may list their own permissions without
+	// any special permission; listing another user's requires the actor to
+	// hold the "<actorId>:super_user" permission.
+	ListPermissions(ctx context.Context, input *ListPermissionsInput) *ListPermissionsOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -196,4 +202,33 @@ type RevokePermissionOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// ListPermissionsInput represents input for listing a user's permissions.
+// TargetUserId defaults to ActorId when 0 (list your own permissions).
+type ListPermissionsInput struct {
+	TraceId      string
+	ActorId      int // Must hold the "<actorId>:super_user" permission when TargetUserId != ActorId
+	TargetUserId int
+}
+
+// ListPermissionsOutput represents the effective permission list of a user:
+// their direct grants, the roles they hold (with each role's permissions),
+// and the deduplicated union of both.
+type ListPermissionsOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Direct    []string
+	Roles     []PermissionRole
+	Effective []string
+}
+
+// PermissionRole pairs a role with the bare permissions it grants.
+type PermissionRole struct {
+	Id          int
+	Name        string
+	Description string
+	Permissions []string
 }

@@ -58,6 +58,18 @@ type ServiceFake struct {
 	grantPermissionSystemReturnsOnCall map[int]struct {
 		result1 *workflow.GrantPermissionOutput
 	}
+	ListPermissionsStub        func(context.Context, *user.ListPermissionsInput) *user.ListPermissionsOutput
+	listPermissionsMutex       sync.RWMutex
+	listPermissionsArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.ListPermissionsInput
+	}
+	listPermissionsReturns struct {
+		result1 *user.ListPermissionsOutput
+	}
+	listPermissionsReturnsOnCall map[int]struct {
+		result1 *user.ListPermissionsOutput
+	}
 	LoginStub        func(context.Context, *user.LoginInput) *user.LoginOutput
 	loginMutex       sync.RWMutex
 	loginArgsForCall []struct {
@@ -379,6 +391,68 @@ func (fake *ServiceFake) GrantPermissionSystemReturnsOnCall(i int, result1 *work
 	}
 	fake.grantPermissionSystemReturnsOnCall[i] = struct {
 		result1 *workflow.GrantPermissionOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListPermissions(arg1 context.Context, arg2 *user.ListPermissionsInput) *user.ListPermissionsOutput {
+	fake.listPermissionsMutex.Lock()
+	ret, specificReturn := fake.listPermissionsReturnsOnCall[len(fake.listPermissionsArgsForCall)]
+	fake.listPermissionsArgsForCall = append(fake.listPermissionsArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.ListPermissionsInput
+	}{arg1, arg2})
+	stub := fake.ListPermissionsStub
+	fakeReturns := fake.listPermissionsReturns
+	fake.recordInvocation("ListPermissions", []interface{}{arg1, arg2})
+	fake.listPermissionsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) ListPermissionsCallCount() int {
+	fake.listPermissionsMutex.RLock()
+	defer fake.listPermissionsMutex.RUnlock()
+	return len(fake.listPermissionsArgsForCall)
+}
+
+func (fake *ServiceFake) ListPermissionsCalls(stub func(context.Context, *user.ListPermissionsInput) *user.ListPermissionsOutput) {
+	fake.listPermissionsMutex.Lock()
+	defer fake.listPermissionsMutex.Unlock()
+	fake.ListPermissionsStub = stub
+}
+
+func (fake *ServiceFake) ListPermissionsArgsForCall(i int) (context.Context, *user.ListPermissionsInput) {
+	fake.listPermissionsMutex.RLock()
+	defer fake.listPermissionsMutex.RUnlock()
+	argsForCall := fake.listPermissionsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) ListPermissionsReturns(result1 *user.ListPermissionsOutput) {
+	fake.listPermissionsMutex.Lock()
+	defer fake.listPermissionsMutex.Unlock()
+	fake.ListPermissionsStub = nil
+	fake.listPermissionsReturns = struct {
+		result1 *user.ListPermissionsOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListPermissionsReturnsOnCall(i int, result1 *user.ListPermissionsOutput) {
+	fake.listPermissionsMutex.Lock()
+	defer fake.listPermissionsMutex.Unlock()
+	fake.ListPermissionsStub = nil
+	if fake.listPermissionsReturnsOnCall == nil {
+		fake.listPermissionsReturnsOnCall = make(map[int]struct {
+			result1 *user.ListPermissionsOutput
+		})
+	}
+	fake.listPermissionsReturnsOnCall[i] = struct {
+		result1 *user.ListPermissionsOutput
 	}{result1}
 }
 

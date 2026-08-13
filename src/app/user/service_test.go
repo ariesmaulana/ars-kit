@@ -1628,3 +1628,255 @@ func TestUserRevokePermission(t *testing.T) {
 		})
 	})
 }
+
+func TestUserListPermissions(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User ListPermissions", func() {
+
+			var Users []DataUser
+
+			type input struct {
+				traceId      string
+				actorId      int
+				targetUserId int
+			}
+			type expected struct {
+				success           bool
+				message           string
+				errorCode         user.ErrorCode
+				expectedCountMock int
+				listCalls         int
+			}
+
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+				listOutput      *permission.ListUserPermissionsOutput
+			}
+
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "actoruser",
+						Email:    "actor@example.com",
+						FullName: "Actor User",
+						Password: "password123",
+					},
+					{
+						Idx:      1,
+						Username: "targetuser",
+						Email:    "target@example.com",
+						FullName: "Target User",
+						Password: "password123",
+					},
+				}
+
+				for i, userData := range Users {
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					Users[i].Id = insertedUser.Id
+				}
+			})
+
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				counter := &testsuite.Counter{}
+				listCounter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.actorId, input.UserID, r.name)
+					assert.Equal(t, "super_user", input.Permission, r.name)
+					counter.Inc()
+					if r.permissionCheck != nil {
+						return r.permissionCheck
+					}
+					return createFailedPermissionCheck()
+				}
+
+				app.PermissionSvcMock.ListUserPermissionsStub = func(ctx context.Context, input *permission.ListUserPermissionsInput) *permission.ListUserPermissionsOutput {
+					listCounter.Inc()
+					if r.listOutput != nil {
+						return r.listOutput
+					}
+					return &permission.ListUserPermissionsOutput{
+						Success:   false,
+						Message:   "Failed to list permissions",
+						Direct:    []string{},
+						Roles:     []permission.RolePermissions{},
+						Effective: []string{},
+					}
+				}
+
+				target := r.input.targetUserId
+				if target == 0 {
+					target = r.input.actorId
+				}
+
+				output := app.Service.ListPermissions(ctx, &user.ListPermissionsInput{
+					TraceId:      r.input.traceId,
+					ActorId:      r.input.actorId,
+					TargetUserId: r.input.targetUserId,
+				})
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.errorCode, output.ErrorCode, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - super user check call count")
+				assert.Equal(t, r.expected.listCalls, listCounter.Total(), r.name+" - list call count")
+
+				if r.listOutput != nil && r.expected.success {
+					// The permission module's listing is passed through verbatim
+					assert.Equal(t, r.listOutput.Direct, output.Direct, r.name)
+					assert.Equal(t, r.listOutput.Effective, output.Effective, r.name)
+					assert.Len(t, output.Roles, len(r.listOutput.Roles), r.name)
+				}
+			}
+
+			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			suite.Run(t, "ListPermissions scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				runRows(t, app, []*testRow{
+					// ===== Own permissions: no permission check needed =====
+					{
+						name: "Should list own permissions without super user check",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[0].Id,
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permissions retrieved successfully",
+							expectedCountMock: 0,
+							listCalls:         1,
+						},
+						listOutput: &permission.ListUserPermissionsOutput{
+							Success:   true,
+							Message:   "Permissions retrieved successfully",
+							Direct:    []string{"user:profile_update"},
+							Roles:     []permission.RolePermissions{},
+							Effective: []string{"user:profile_update"},
+						},
+					},
+					{
+						name: "Should list own permissions when target is omitted",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permissions retrieved successfully",
+							expectedCountMock: 0,
+							listCalls:         1,
+						},
+						listOutput: &permission.ListUserPermissionsOutput{
+							Success:   true,
+							Message:   "Permissions retrieved successfully",
+							Direct:    []string{},
+							Roles:     []permission.RolePermissions{},
+							Effective: []string{},
+						},
+					},
+					// ===== Listing another user =====
+					{
+						name: "Should list another user when actor holds super user",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permissions retrieved successfully",
+							expectedCountMock: 1,
+							listCalls:         1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
+						listOutput: &permission.ListUserPermissionsOutput{
+							Success:   true,
+							Message:   "Permissions retrieved successfully",
+							Direct:    []string{"report:view"},
+							Roles:     []permission.RolePermissions{},
+							Effective: []string{"report:view"},
+						},
+					},
+					{
+						name: "Should deny listing another user without super user",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[1].Id,
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: only super user can view other users' permissions",
+							errorCode:         user.ErrorCodeForbidden,
+							expectedCountMock: 1,
+							listCalls:         0,
+						},
+						permissionCheck: createDeniedPermissionCheck(),
+					},
+					// ===== Permission module failure =====
+					{
+						name: "Should fail when permission module listing fails",
+						input: &input{
+							traceId:      "trace-test",
+							actorId:      Users[0].Id,
+							targetUserId: Users[0].Id,
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Failed to list permissions",
+							errorCode:         user.ErrorCodeInternal,
+							expectedCountMock: 0,
+							listCalls:         1,
+						},
+						listOutput: &permission.ListUserPermissionsOutput{
+							Success: false,
+							Message: "Failed to list permissions",
+						},
+					},
+					// ===== Validation =====
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId:      "",
+							actorId:      Users[0].Id,
+							targetUserId: Users[0].Id,
+						},
+						expected: &expected{
+							success:           false,
+							message:           "TraceId is mandatory",
+							errorCode:         user.ErrorCodeValidation,
+							expectedCountMock: 0,
+							listCalls:         0,
+						},
+					},
+					{
+						name: "Should fail when ActorId is empty",
+						input: &input{
+							traceId: "trace-test",
+							actorId: 0,
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Actor ID is mandatory",
+							errorCode:         user.ErrorCodeValidation,
+							expectedCountMock: 0,
+							listCalls:         0,
+						},
+					},
+				})
+			})
+
+		})
+	})
+}
