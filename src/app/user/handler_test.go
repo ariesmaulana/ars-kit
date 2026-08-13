@@ -784,6 +784,30 @@ func TestHandlerUpdateProfile_PermissionDeniedReturns403(t *testing.T) {
 	assert.Equal(t, "Unauthorized: you do not have permission to update profile", resp.Message)
 }
 
+func TestHandlerUpdateProfile_ServiceValidationErrorReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateProfileReturns(&user.UpdateProfileOutput{
+		Success:   false,
+		Message:   "Full name is mandatory",
+		ErrorCode: user.ErrorCodeValidation,
+	})
+
+	body := jsonBody(t, map[string]string{"full_name": ""})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Full name is mandatory", resp.Message)
+}
+
 func TestHandlerUpdateProfile_NoTokenReturns401(t *testing.T) {
 	e, _ := newHandlerSetup()
 
@@ -874,6 +898,30 @@ func TestHandlerUpdateEmail_ConflictReturns409(t *testing.T) {
 	decodeJSON(t, rec, &resp)
 	assert.False(t, resp.Success)
 	assert.Equal(t, "Email already in use", resp.Message)
+}
+
+func TestHandlerUpdateEmail_ServiceValidationErrorReturns400(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UpdateEmailReturns(&user.UpdateEmailOutput{
+		Success:   false,
+		Message:   "Invalid email",
+		ErrorCode: user.ErrorCodeValidation,
+	})
+
+	body := jsonBody(t, map[string]string{"new_email": "not-an-email"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/email", body)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	var resp user.UserResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Invalid email", resp.Message)
 }
 
 func TestHandlerUpdateEmail_NoTokenReturns401(t *testing.T) {

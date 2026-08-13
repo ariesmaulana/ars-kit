@@ -2,6 +2,7 @@ package user_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
@@ -1768,6 +1769,18 @@ func TestUserUpdateProfile(t *testing.T) {
 						expected: &expected{
 							success:           false,
 							message:           "Full name is mandatory",
+							expectedCountMock: 0,
+						},
+					},
+					{
+						name: "Should fail when full name exceeds 255 characters",
+						input: &input{
+							userID:   Users[0].Id,
+							fullName: strings.Repeat("a", 256),
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Full name must be at most 255 characters long",
 							expectedCountMock: 0,
 						},
 					},

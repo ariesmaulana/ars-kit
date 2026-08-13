@@ -69,6 +69,7 @@ func isUniqueViolation(err error) bool {
 	}
 	return false
 }
+
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 	query := `SELECT id, username, email, full_name, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)

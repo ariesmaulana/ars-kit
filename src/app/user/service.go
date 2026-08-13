@@ -540,6 +540,14 @@ func (s *service) UpdateProfile(ctx context.Context, input *UpdateProfileInput) 
 
 	data, errType, err := db.UpdateFullName(ctx, input.Id, fullName)
 	if err != nil {
+		if errType == ErrTypeNotFound {
+			// Unreachable in practice: the row was locked above within the same
+			// transaction. Kept for consistency with the other update paths.
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update full name")
 		resp.Message = "Failed to update profile"
 		resp.ErrorCode = ErrorCodeInternal
