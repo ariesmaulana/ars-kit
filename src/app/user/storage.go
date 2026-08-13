@@ -62,7 +62,7 @@ func (st *storageTx) InsertUser(ctx context.Context, username, email, fullName, 
 	return id, ErrTypeNone, nil
 }
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
-	query := `SELECT id, username, email, full_name, created_at, updated_at FROM users WHERE id = $1`
+	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -72,7 +72,7 @@ func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 }
 
 func (st *storageTx) GetUserByUsername(ctx context.Context, username string) (User, error) {
-	query := `SELECT id, username, email, full_name, created_at, updated_at FROM users WHERE username = $1`
+	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE username = $1`
 	row := st.tx.QueryRow(ctx, query, username)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -112,7 +112,7 @@ func (st *storageTx) UpdatePassword(ctx context.Context, id int, newPassword str
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
-	query := `SELECT id, username, email, full_name, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
+	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -126,7 +126,7 @@ func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErr
 
 func convertUserRow(row pgx.Row) (User, error) {
 	var user User
-	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &user.IsActive, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return User{}, err
 	}
@@ -171,6 +171,61 @@ func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
 		return fmt.Errorf("failed to reset login state: %w", err)
 	}
 	return nil
+}
+
+// CountUsers returns the total number of users.
+func (st *storageTx) CountUsers(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM users`
+	var total int
+	err := st.tx.QueryRow(ctx, query).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+	return total, nil
+}
+
+// ListUsers returns one page of users, ordered by id ascending so the admin
+// list is stable across requests.
+func (st *storageTx) ListUsers(ctx context.Context, page, pageSize int) ([]User, error) {
+	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at
+		FROM users
+		ORDER BY id
+		LIMIT $1 OFFSET $2`
+	offset := (page - 1) * pageSize
+	rows, err := st.tx.Query(ctx, query, pageSize, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]User, 0, pageSize)
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user row: %w", err)
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate users: %w", err)
+	}
+	return users, nil
+}
+
+// SetUserActive flips a user's is_active flag and returns the updated row.
+func (st *storageTx) SetUserActive(ctx context.Context, id int, isActive bool) (User, StorageErrorType, error) {
+	query := `UPDATE users SET is_active = $1, updated_at = NOW()
+		WHERE id = $2
+		RETURNING id, username, email, full_name, is_active, created_at, updated_at`
+	row := st.tx.QueryRow(ctx, query, isActive, id)
+	user, err := convertUserRow(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrTypeNotFound, fmt.Errorf("failed to set user active: %w", err)
+		}
+		return User{}, ErrTypeCommon, fmt.Errorf("failed to set user active: %w", err)
+	}
+	return user, ErrTypeNone, nil
 }
 
 // Commit commits the transaction

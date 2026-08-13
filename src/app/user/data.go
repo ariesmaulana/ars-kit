@@ -7,6 +7,7 @@ type User struct {
 	Username  string
 	Email     string
 	FullName  string
+	IsActive  bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

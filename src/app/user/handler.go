@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,6 +105,15 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.PUT("/profile/password", h.UpdatePassword)
 	protected.POST("/permissions/grant", h.GrantPermission)
 	protected.POST("/permissions/revoke", h.RevokePermission)
+
+	// Admin routes — user management. Every action is gated by the
+	// "<actorId>:super_user" permission inside the service layer.
+	admin := g.Group("/admin/users")
+	admin.Use(h.jwtService.JWTMiddleware())
+	admin.GET("", h.AdminListUsers)
+	admin.GET("/:id", h.AdminGetUserById)
+	admin.POST("/:id/deactivate", h.AdminDeactivateUser)
+	admin.POST("/:id/reactivate", h.AdminReactivateUser)
 }
 
 // HTTP Request/Response structs
@@ -139,6 +149,7 @@ type UserDTO struct {
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	FullName  string    `json:"full_name"`
+	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -171,15 +182,49 @@ type UserResponse struct {
 	Data    *UserDTO `json:"data,omitempty"`
 }
 
+// AdminUserListResponse represents the HTTP response for GET /admin/users.
+// Pagination uses PaginationResponse so clients get page metadata without
+// parsing headers.
+type AdminUserListResponse struct {
+	Success    bool               `json:"success"`
+	Message    string             `json:"message"`
+	Data       []UserDTO          `json:"data"`
+	Pagination PaginationResponse `json:"pagination"`
+}
+
+// AdminUserResponse represents the HTTP response for admin user lookup and
+// activate/deactivate operations.
+type AdminUserResponse struct {
+	Success bool     `json:"success"`
+	Message string   `json:"message"`
+	Data    *UserDTO `json:"data,omitempty"`
+}
+
 func toUserDTO(user User) UserDTO {
 	return UserDTO{
 		Id:        user.Id,
 		Username:  user.Username,
 		Email:     user.Email,
 		FullName:  user.FullName,
+		IsActive:  user.IsActive,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
+}
+
+// adminActorId extracts the authenticated user id for an admin action. It
+// returns the id and whether the extraction succeeded.
+func adminActorId(c echo.Context) (int, bool) {
+	userID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return 0, false
+	}
+	return userID, true
+}
+
+// adminUserId parses the :id path param of an admin user route.
+func adminUserId(c echo.Context) (int, error) {
+	return strconv.Atoi(c.Param("id"))
 }
 
 // Register handles POST /api/v1/users/register
@@ -632,4 +677,234 @@ func (h *Handler) RevokePermission(c echo.Context) error {
 		Success: true,
 		Message: output.Message,
 	})
+}
+
+// ──────────────────────────────────────────────────────────────
+// Admin user management (all routes gated by super_user in the service)
+// ──────────────────────────────────────────────────────────────
+
+// AdminListUsers handles GET /api/v1/admin/users
+// @Summary List users (admin)
+// @Description Return a paginated list of all users. Only super users may do this.
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number (default 1)"
+// @Param page_size query int false "Page size 1..100 (default 10)"
+// @Success 200 {object} AdminUserListResponse
+// @Failure 400 {object} AdminUserListResponse
+// @Failure 401 {object} AdminUserListResponse
+// @Failure 403 {object} AdminUserListResponse
+// @Failure 500 {object} AdminUserListResponse
+// @Router /api/v1/admin/users [get]
+func (h *Handler) AdminListUsers(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, ok := adminActorId(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, AdminUserListResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	page, err := queryInt(c, "page", 1)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, AdminUserListResponse{
+			Success: false,
+			Message: "Page must be a positive integer",
+		})
+	}
+	pageSize, err := queryInt(c, "page_size", 10)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, AdminUserListResponse{
+			Success: false,
+			Message: "Page size must be a positive integer",
+		})
+	}
+
+	output := h.service.ListUsers(c.Request().Context(), &ListUsersInput{
+		TraceId:  traceID,
+		ActorId:  actorID,
+		Page:     page,
+		PageSize: pageSize,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AdminUserListResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	data := make([]UserDTO, 0, len(output.Users))
+	for _, u := range output.Users {
+		data = append(data, toUserDTO(u))
+	}
+
+	totalPages := 0
+	if output.Total > 0 {
+		totalPages = (output.Total + pageSize - 1) / pageSize
+	}
+
+	return c.JSON(http.StatusOK, AdminUserListResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    data,
+		Pagination: PaginationResponse{
+			Page:       page,
+			PageSize:   pageSize,
+			Total:      output.Total,
+			TotalPages: totalPages,
+		},
+	})
+}
+
+// AdminGetUserById handles GET /api/v1/admin/users/:id
+// @Summary Look up a user (admin)
+// @Description Return one user by id. Only super users may do this.
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User id"
+// @Success 200 {object} AdminUserResponse
+// @Failure 400 {object} AdminUserResponse
+// @Failure 401 {object} AdminUserResponse
+// @Failure 403 {object} AdminUserResponse
+// @Failure 500 {object} AdminUserResponse
+// @Router /api/v1/admin/users/{id} [get]
+func (h *Handler) AdminGetUserById(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, ok := adminActorId(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, AdminUserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := adminUserId(c)
+	if err != nil || id < 1 {
+		return c.JSON(http.StatusBadRequest, AdminUserResponse{
+			Success: false,
+			Message: "User ID is mandatory",
+		})
+	}
+
+	output := h.service.AdminGetUserById(c.Request().Context(), &AdminGetUserByIdInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Id:      id,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AdminUserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, AdminUserResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    &dto,
+	})
+}
+
+// AdminDeactivateUser handles POST /api/v1/admin/users/:id/deactivate
+// @Summary Deactivate a user (admin)
+// @Description Revoke a user's ability to log in. Only super users may do this.
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User id"
+// @Success 200 {object} AdminUserResponse
+// @Failure 400 {object} AdminUserResponse
+// @Failure 401 {object} AdminUserResponse
+// @Failure 403 {object} AdminUserResponse
+// @Failure 500 {object} AdminUserResponse
+// @Router /api/v1/admin/users/{id}/deactivate [post]
+func (h *Handler) AdminDeactivateUser(c echo.Context) error {
+	return h.adminSetUserActive(c, false)
+}
+
+// AdminReactivateUser handles POST /api/v1/admin/users/:id/reactivate
+// @Summary Reactivate a user (admin)
+// @Description Restore a deactivated user's ability to log in. Only super users may do this.
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User id"
+// @Success 200 {object} AdminUserResponse
+// @Failure 400 {object} AdminUserResponse
+// @Failure 401 {object} AdminUserResponse
+// @Failure 403 {object} AdminUserResponse
+// @Failure 500 {object} AdminUserResponse
+// @Router /api/v1/admin/users/{id}/reactivate [post]
+func (h *Handler) AdminReactivateUser(c echo.Context) error {
+	return h.adminSetUserActive(c, true)
+}
+
+// adminSetUserActive is shared by the deactivate/reactivate endpoints; the
+// action is expressed by the isActive flag.
+func (h *Handler) adminSetUserActive(c echo.Context, isActive bool) error {
+	traceID := xid.New().String()
+
+	actorID, ok := adminActorId(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, AdminUserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := adminUserId(c)
+	if err != nil || id < 1 {
+		return c.JSON(http.StatusBadRequest, AdminUserResponse{
+			Success: false,
+			Message: "User ID is mandatory",
+		})
+	}
+
+	output := h.service.SetUserActive(c.Request().Context(), &SetUserActiveInput{
+		TraceId:  traceID,
+		ActorId:  actorID,
+		UserId:   id,
+		IsActive: isActive,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AdminUserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, AdminUserResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    &dto,
+	})
+}
+
+// queryInt parses an integer query parameter, falling back to def when the
+// parameter is absent. A present-but-invalid value is an error so API clients
+// learn about typos instead of silently getting defaults.
+func queryInt(c echo.Context, name string, def int) (int, error) {
+	raw := c.QueryParam(name)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
 }

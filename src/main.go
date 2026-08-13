@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -55,6 +56,8 @@ func main() {
 		serve(conf, app)
 	case "worker":
 		worker(conf, app)
+	case "superuser":
+		superuser(app)
 	default:
 		usage(os.Args[1])
 		os.Exit(2)
@@ -211,6 +214,51 @@ func serve(conf *config.Config, app *App) {
 	log.Info().Msg("Server exited properly")
 }
 
+// superuser bootstraps the first super user from SUPERUSER_* environment
+// variables. It is the documented path to create an admin on a fresh deploy:
+// there is deliberately no HTTP endpoint for it, so the operation cannot be
+// abused remotely. Re-running with the same username is safe — the account is
+// reused and the super_user permission granted again.
+func superuser(app *App) {
+	username := os.Getenv("SUPERUSER_USERNAME")
+	email := os.Getenv("SUPERUSER_EMAIL")
+	fullName := os.Getenv("SUPERUSER_FULL_NAME")
+	password := os.Getenv("SUPERUSER_PASSWORD")
+
+	var missing []string
+	for _, kv := range []struct {
+		name  string
+		value string
+	}{
+		{"SUPERUSER_USERNAME", username},
+		{"SUPERUSER_EMAIL", email},
+		{"SUPERUSER_FULL_NAME", fullName},
+		{"SUPERUSER_PASSWORD", password},
+	} {
+		if kv.value == "" {
+			missing = append(missing, kv.name)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "ars-kit superuser: missing required environment variables: %s\n", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
+
+	output := app.UserService.BootstrapSuperUser(context.Background(), &user.BootstrapSuperUserInput{
+		TraceId:  "superuser-bootstrap",
+		Username: username,
+		Email:    email,
+		FullName: fullName,
+		Password: password,
+	})
+	if !output.Success {
+		fmt.Fprintf(os.Stderr, "ars-kit superuser: %s\n", output.Message)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Super user %q (id=%d) bootstrapped successfully\n", output.User.Username, output.User.Id)
+}
+
 // worker runs the workflow engine workers. Jobs enqueued by the serve process
 // (or any other process) are executed here.
 func worker(conf *config.Config, app *App) {
@@ -248,7 +296,8 @@ func usage(cmd string) {
 	if cmd != "" {
 		fmt.Fprintf(os.Stderr, "ars-kit: unknown command %q\n", cmd)
 	}
-	fmt.Fprintln(os.Stderr, "usage: ars-kit <serve|worker>")
-	fmt.Fprintln(os.Stderr, "  serve   run the HTTP server (enqueues workflow jobs)")
-	fmt.Fprintln(os.Stderr, "  worker  run the workflow engine workers")
+	fmt.Fprintln(os.Stderr, "usage: ars-kit <serve|worker|superuser>")
+	fmt.Fprintln(os.Stderr, "  serve      run the HTTP server (enqueues workflow jobs)")
+	fmt.Fprintln(os.Stderr, "  worker     run the workflow engine workers")
+	fmt.Fprintln(os.Stderr, "  superuser  bootstrap the first super user (SUPERUSER_* env vars)")
 }

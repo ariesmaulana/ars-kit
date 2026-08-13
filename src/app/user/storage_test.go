@@ -2,6 +2,7 @@ package user_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -365,6 +366,133 @@ func TestStorageResetLoginState(t *testing.T) {
 				assert.Equal(t, 0, state.FailedAttempts)
 				assert.Nil(t, state.LastFailedLoginAt)
 				assert.Nil(t, state.LockedUntil)
+			})
+		})
+	})
+}
+
+func TestStorageCountUsers(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage CountUsers", func() {
+			suite.Runs(t, "Should return the total number of users", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "countone", "countone@example.com", "Count One", "password123")
+				app.Helper.InsertUser(ctx, t, "counttwo", "counttwo@example.com", "Count Two", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				total, err := tx.CountUsers(ctx)
+				assert.Nil(t, err)
+				assert.Equal(t, 2, total)
+			})
+		})
+	})
+}
+
+func TestStorageListUsers(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage ListUsers", func() {
+			suite.Runs(t, "Should return the requested page ordered by id", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				for i := 1; i <= 5; i++ {
+					app.Helper.InsertUser(ctx, t,
+						fmt.Sprintf("pageuser%d", i),
+						fmt.Sprintf("pageuser%d@example.com", i),
+						"Page User", "password123")
+				}
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				users, err := tx.ListUsers(ctx, 2, 2)
+				assert.Nil(t, err)
+				assert.Len(t, users, 2)
+				// Page 2 of 2-per-page over 5 users → the 3rd and 4th users,
+				// ascending by id.
+				assert.Less(t, users[0].Id, users[1].Id)
+				assert.True(t, users[0].Id > 0)
+				assert.True(t, users[0].IsActive)
+			})
+
+			suite.Runs(t, "Should return an empty page beyond the last one", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "onlyone", "onlyone@example.com", "Only One", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				users, err := tx.ListUsers(ctx, 99, 10)
+				assert.Nil(t, err)
+				assert.Len(t, users, 0)
+			})
+		})
+	})
+}
+
+func TestStorageSetUserActive(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage SetUserActive", func() {
+			suite.Runs(t, "Should deactivate a user and return the updated row", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "toggleuser", "toggle@example.com", "Toggle User", "password123")
+				assert.True(t, existingUser.IsActive)
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				updated, errType, err := tx.SetUserActive(ctx, existingUser.Id, false)
+				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.False(t, updated.IsActive)
+				assert.Equal(t, existingUser.Id, updated.Id)
+
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				assert.False(t, app.Helper.IsUserActive(ctx, t, existingUser.Id))
+			})
+
+			suite.Runs(t, "Should reactivate a deactivated user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "reactive", "reactive@example.com", "Reactive", "password123")
+				app.Helper.SetUserActiveDirect(ctx, t, existingUser.Id, false)
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				updated, errType, err := tx.SetUserActive(ctx, existingUser.Id, true)
+				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.True(t, updated.IsActive)
+			})
+
+			suite.Runs(t, "Should report not found for a missing user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.SetUserActive(ctx, 99999, false)
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeNotFound, errType)
 			})
 		})
 	})

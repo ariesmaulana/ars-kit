@@ -44,13 +44,23 @@ var PermissionOnly = All[1:2]
 var WorkflowOnly = All[2:3]
 
 // NewProvider builds a goose provider for a domain bound to the domain's own
-// version-history table.
+// version-history table. Out-of-order is enabled because every domain has its
+// own version table but versions are numbered per domain (e.g. user/20260102
+// vs permission/20240102); a domain applied later may carry a version lower
+// than one recorded by an earlier domain. Each migration touches its own
+// table, so applying order is irrelevant to correctness.
 func NewProvider(db *sql.DB, d Domain) (*goose.Provider, error) {
 	sqlFS, err := fs.Sub(d.FS, "sql")
 	if err != nil {
 		return nil, fmt.Errorf("migrate %s: sub fs: %w", d.Name, err)
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, sqlFS, goose.WithTableName(d.TableName))
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		db,
+		sqlFS,
+		goose.WithTableName(d.TableName),
+		goose.WithAllowOutofOrder(true),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("migrate %s: create provider: %w", d.Name, err)
 	}

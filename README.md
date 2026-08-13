@@ -52,7 +52,39 @@ make migrate-status
 make migrate-create user add_roles
 ```
 
-### 3. Test
+### 2.5 Bootstrap the first super user
+
+There is no HTTP endpoint that creates an admin (it would be remotely
+abusable). Instead, run the seed command once on a fresh deploy:
+
+```bash
+SUPERUSER_USERNAME=admin \
+SUPERUSER_EMAIL=admin@example.com \
+SUPERUSER_FULL_NAME="Admin" \
+SUPERUSER_PASSWORD='change-me-now' \
+make superuser
+```
+
+The command creates the account and grants it the `super_user` permission
+(every permission, including user management). Re-running with the same
+username is safe: the existing account is reused and the grant is repeated.
+Then unset the `SUPERUSER_*` variables.
+
+### 3. Admin user management
+
+All admin endpoints require a `super_user` (JWT-authenticated) caller:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/admin/users?page=1&page_size=10` | Paginated user list (`data` + `pagination`) |
+| GET | `/api/v1/admin/users/:id` | Look up one user |
+| POST | `/api/v1/admin/users/:id/deactivate` | Revoke the account's ability to log in (leavers) |
+| POST | `/api/v1/admin/users/:id/reactivate` | Restore the ability to log in |
+
+Deactivating an account blocks future logins (existing JWTs expire on their
+own); an admin cannot deactivate their own account.
+
+### 4. Test
 
 ```bash
 # create test database

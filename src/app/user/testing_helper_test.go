@@ -38,7 +38,7 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 	query := `
 		INSERT INTO users (username, email, full_name, password, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		RETURNING id, username, email, full_name, created_at, updated_at
+		RETURNING id, username, email, full_name, is_active, created_at, updated_at
 	`
 
 	var u user.User
@@ -47,6 +47,7 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.IsActive,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -104,7 +105,7 @@ func (h *TestHelper) ClearUsers(ctx context.Context, t *testing.T) {
 // GetUserById retrieves a user by ID
 func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, is_active, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -115,6 +116,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.IsActive,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -126,7 +128,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 // GetUserByUsername retrieves a user by username
 func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, username string) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, is_active, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -137,6 +139,7 @@ func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, userna
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.IsActive,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -162,10 +165,25 @@ func (h *TestHelper) CountUsers(ctx context.Context, t *testing.T) int {
 	return count
 }
 
+// IsUserActive returns whether the given user account is active.
+func (h *TestHelper) IsUserActive(ctx context.Context, t *testing.T, id int) bool {
+	var active bool
+	err := h.pool.QueryRow(ctx, "SELECT is_active FROM users WHERE id = $1", id).Scan(&active)
+	assert.Nil(t, err)
+	return active
+}
+
+// SetUserActiveDirect flips a user's is_active flag directly, bypassing the
+// service layer. Used to arrange login/reactivation scenarios.
+func (h *TestHelper) SetUserActiveDirect(ctx context.Context, t *testing.T, id int, active bool) {
+	_, err := h.pool.Exec(ctx, "UPDATE users SET is_active = $1 WHERE id = $2", active, id)
+	assert.Nil(t, err)
+}
+
 // GetAllUsers retrieves all users as a map indexed by user ID
 func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, is_active, created_at, updated_at
 		FROM users
 		ORDER BY id
 	`
@@ -182,6 +200,7 @@ func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user
 			&u.Username,
 			&u.Email,
 			&u.FullName,
+			&u.IsActive,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		)

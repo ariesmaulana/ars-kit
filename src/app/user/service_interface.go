@@ -44,6 +44,25 @@ type Service interface {
 	// RevokePermission removes a permission from a target user.
 	// Only a user holding the "<actorId>:super_user" permission may do this.
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+
+	// ListUsers returns a paginated page of users for the admin user list.
+	// Only a user holding the "<actorId>:super_user" permission may do this.
+	ListUsers(ctx context.Context, input *ListUsersInput) *ListUsersOutput
+
+	// AdminGetUserById retrieves any user by ID for the admin user lookup.
+	// Only a user holding the "<actorId>:super_user" permission may do this.
+	AdminGetUserById(ctx context.Context, input *AdminGetUserByIdInput) *AdminGetUserByIdOutput
+
+	// SetUserActive activates or deactivates a target account. Deactivating
+	// revokes the ability to log in. Only a super user may do this, and never
+	// on their own account.
+	SetUserActive(ctx context.Context, input *SetUserActiveInput) *SetUserActiveOutput
+
+	// BootstrapSuperUser creates the first super user — or upgrades an
+	// existing account on a re-run — and grants it the super_user permission.
+	// There is deliberately no HTTP endpoint for it; the "ars-kit superuser"
+	// command is the documented bootstrap path.
+	BootstrapSuperUser(ctx context.Context, input *BootstrapSuperUserInput) *BootstrapSuperUserOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -196,4 +215,73 @@ type RevokePermissionOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// ListUsersInput represents input for the admin user list.
+type ListUsersInput struct {
+	TraceId  string
+	ActorId  int // Must hold the "<actorId>:super_user" permission
+	Page     int // 1-based
+	PageSize int // 1..100
+}
+
+// ListUsersOutput represents output after listing users.
+type ListUsersOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Users     []User
+	Total     int
+}
+
+// AdminGetUserByIdInput represents input for the admin user lookup.
+type AdminGetUserByIdInput struct {
+	TraceId string
+	ActorId int // Must hold the "<actorId>:super_user" permission
+	Id      int
+}
+
+// AdminGetUserByIdOutput represents output after looking up a user.
+type AdminGetUserByIdOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
+}
+
+// SetUserActiveInput represents input for activating/deactivating a user.
+type SetUserActiveInput struct {
+	TraceId  string
+	ActorId  int // Must hold the "<actorId>:super_user" permission
+	UserId   int
+	IsActive bool
+}
+
+// SetUserActiveOutput represents output after changing a user's active state.
+type SetUserActiveOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
+}
+
+// BootstrapSuperUserInput represents input for the first-super-user bootstrap.
+type BootstrapSuperUserInput struct {
+	TraceId  string
+	Username string
+	Email    string
+	FullName string
+	Password string
+}
+
+// BootstrapSuperUserOutput represents output after bootstrapping a super user.
+type BootstrapSuperUserOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
 }
