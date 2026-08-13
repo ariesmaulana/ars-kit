@@ -65,6 +65,12 @@ layer is httptest against a generated fake; storage is tested directly.
   always matches a later check. Callers never construct keys.
 - **`super_user` is a wildcard**: a user holding `<user_id>:super_user` passes
   every check. Grant/revoke themselves require the actor to hold `super_user`.
+- **Audit log (D2)**: the `audit_log` table records security-relevant events
+  (grant/revoke/password/username/email/login) with the actor, the affected
+  user, and event metadata. Self-service changes (username/password) write
+  their trail inside the same transaction as the change; login/grant/revoke
+  writes are best-effort and never fail the primary operation. Only a
+  `super_user` can read the log via `GET /api/v1/users/audit-logs`.
 
 ### Typed operation results
 

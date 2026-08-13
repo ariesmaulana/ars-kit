@@ -8,6 +8,7 @@ import (
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUserRegister(t *testing.T) {
@@ -1625,6 +1626,403 @@ func TestUserRevokePermission(t *testing.T) {
 				})
 			})
 
+		})
+	})
+}
+
+func TestUserAuditLogWrites(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User Audit Log Writes", func() {
+
+			// insertUsers creates the two fixture users in the scenario's own
+			// schema and returns their ids. Each suite.Run runs in its own
+			// parallel schema, so the fixtures live per scenario — never shared.
+			insertUsers := func(ctx context.Context, app *UserApp) (actorID, targetID int) {
+				actor := app.Helper.InsertUserWithHashedPassword(ctx, t, "actoruser", "actor@example.com", "Actor User", "password123")
+				target := app.Helper.InsertUserWithHashedPassword(ctx, t, "targetuser", "target@example.com", "Target User", "password123")
+				return actor.Id, target.Id
+			}
+
+			suite.Run(t, "Login records an audit entry", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, _ := insertUsers(ctx, app)
+				output := app.Service.Login(ctx, &user.LoginInput{
+					TraceId:  "trace-login",
+					Username: "actoruser",
+					Password: "password123",
+				})
+				assert.True(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventLogin, entries[0].Event)
+				assert.NotNil(t, entries[0].ActorId)
+				assert.Equal(t, actorID, *entries[0].ActorId)
+				assert.NotNil(t, entries[0].TargetUserId)
+				assert.Equal(t, actorID, *entries[0].TargetUserId)
+			})
+
+			suite.Run(t, "Login failure records no audit entry", func(t *testing.T, ctx context.Context, app *UserApp) {
+				insertUsers(ctx, app)
+				output := app.Service.Login(ctx, &user.LoginInput{
+					TraceId:  "trace-login-fail",
+					Username: "actoruser",
+					Password: "wrongpassword",
+				})
+				assert.False(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				assert.Empty(t, entries)
+			})
+
+			suite.Run(t, "Username update records an audit entry with old and new values", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, _ := insertUsers(ctx, app)
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+
+				output := app.Service.UpdateUsername(ctx, &user.UpdateUsernameInput{
+					TraceId:     "trace-username",
+					Id:          actorID,
+					NewUsername: "renameduser",
+				})
+				assert.True(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventUsername, entries[0].Event)
+				assert.Equal(t, actorID, *entries[0].ActorId)
+				assert.Equal(t, "actoruser", entries[0].Metadata["old_username"])
+				assert.Equal(t, "renameduser", entries[0].Metadata["new_username"])
+			})
+
+			suite.Run(t, "Password update records an audit entry without the hash", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, _ := insertUsers(ctx, app)
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+
+				output := app.Service.UpdatePassword(ctx, &user.UpdatePasswordInput{
+					TraceId:     "trace-password",
+					Id:          actorID,
+					OldPassword: "password123",
+					NewPassword: "newpassword123",
+				})
+				assert.True(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventPassword, entries[0].Event)
+				assert.Equal(t, actorID, *entries[0].ActorId)
+				assert.Empty(t, entries[0].Metadata)
+			})
+
+			suite.Run(t, "Grant permission records an audit entry with the permission string", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, targetID := insertUsers(ctx, app)
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+				app.PermissionSvcMock.GrantPermissionStub = func(ctx context.Context, input *permission.GrantPermissionInput) *permission.GrantPermissionOutput {
+					return createSuccessfulGrant()
+				}
+
+				output := app.Service.GrantPermission(ctx, &user.GrantPermissionInput{
+					TraceId:      "trace-grant",
+					ActorId:      actorID,
+					TargetUserId: targetID,
+					Permission:   "user:profile_update",
+				})
+				assert.True(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventGrant, entries[0].Event)
+				assert.Equal(t, actorID, *entries[0].ActorId)
+				assert.Equal(t, targetID, *entries[0].TargetUserId)
+				assert.Equal(t, "user:profile_update", entries[0].Metadata["permission"])
+			})
+
+			suite.Run(t, "Failed grant records no audit entry", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, targetID := insertUsers(ctx, app)
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+				app.PermissionSvcMock.GrantPermissionStub = func(ctx context.Context, input *permission.GrantPermissionInput) *permission.GrantPermissionOutput {
+					return createFailedGrant()
+				}
+
+				output := app.Service.GrantPermission(ctx, &user.GrantPermissionInput{
+					TraceId:      "trace-grant-fail",
+					ActorId:      actorID,
+					TargetUserId: targetID,
+					Permission:   "user:profile_update",
+				})
+				assert.False(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				assert.Empty(t, entries)
+			})
+
+			suite.Run(t, "Revoke permission records an audit entry with the permission string", func(t *testing.T, ctx context.Context, app *UserApp) {
+				actorID, targetID := insertUsers(ctx, app)
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+				app.PermissionSvcMock.RevokePermissionStub = func(ctx context.Context, input *permission.RevokePermissionInput) *permission.RevokePermissionOutput {
+					return createSuccessfulRevoke()
+				}
+
+				output := app.Service.RevokePermission(ctx, &user.RevokePermissionInput{
+					TraceId:      "trace-revoke",
+					ActorId:      actorID,
+					TargetUserId: targetID,
+					Permission:   "user:profile_update",
+				})
+				assert.True(t, output.Success)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventRevoke, entries[0].Event)
+				assert.Equal(t, actorID, *entries[0].ActorId)
+				assert.Equal(t, targetID, *entries[0].TargetUserId)
+				assert.Equal(t, "user:profile_update", entries[0].Metadata["permission"])
+			})
+		})
+	})
+}
+
+func TestUserListAuditLogs(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User ListAuditLogs", func() {
+
+			// setupAdminLog seeds one login by Target and one grant by Admin to
+			// Target in the scenario's own schema, then returns the two ids.
+			setupAdminLog := func(ctx context.Context, app *UserApp) (adminID, targetID int) {
+				admin := app.Helper.InsertUserWithHashedPassword(ctx, t, "adminuser", "admin@example.com", "Admin User", "password123")
+				target := app.Helper.InsertUserWithHashedPassword(ctx, t, "targetuser", "target@example.com", "Target User", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+				_, err = tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:        user.AuditEventLogin,
+					ActorId:      intPtrForTest(target.Id),
+					TargetUserId: intPtrForTest(target.Id),
+					Metadata:     map[string]any{},
+				})
+				assert.Nil(t, err)
+				_, err = tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:        user.AuditEventGrant,
+					ActorId:      intPtrForTest(admin.Id),
+					TargetUserId: intPtrForTest(target.Id),
+					Metadata:     map[string]any{"permission": "user:profile_update"},
+				})
+				assert.Nil(t, err)
+				err = tx.Commit()
+				assert.Nil(t, err)
+				return admin.Id, target.Id
+			}
+
+			runtest := func(t *testing.T, app *UserApp, r struct {
+				name            string
+				actorId         int
+				permissionCheck *permission.CheckPermissionOutput
+				page            int
+				pageSize        int
+				event           string
+				filterActorId   int
+				filterTargetId  int
+				expected        struct {
+					success    bool
+					message    string
+					entryCount int
+					total      int
+					pageSize   int
+				}
+			}) {
+				ctx := context.Background()
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					if r.permissionCheck != nil {
+						return r.permissionCheck
+					}
+					return createFailedPermissionCheck()
+				}
+
+				output := app.Service.ListAuditLogs(ctx, &user.ListAuditLogsInput{
+					TraceId:        "trace-list",
+					ActorId:        r.actorId,
+					Event:          r.event,
+					FilterActorId:  r.filterActorId,
+					FilterTargetId: r.filterTargetId,
+					Page:           r.page,
+					PageSize:       r.pageSize,
+				})
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				if r.expected.success {
+					assert.Len(t, output.Entries, r.expected.entryCount, r.name)
+					assert.Equal(t, r.expected.total, output.Total, r.name)
+					assert.Equal(t, r.expected.pageSize, output.PageSize, r.name)
+				}
+			}
+
+			suite.Run(t, "ListAuditLogs scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				adminID, targetID := setupAdminLog(ctx, app)
+
+				rows := []struct {
+					name            string
+					actorId         int
+					permissionCheck *permission.CheckPermissionOutput
+					page            int
+					pageSize        int
+					event           string
+					filterActorId   int
+					filterTargetId  int
+					expected        struct {
+						success    bool
+						message    string
+						entryCount int
+						total      int
+						pageSize   int
+					}
+				}{
+					{
+						name:            "Should fail when actor does not hold super user permission",
+						actorId:         targetID,
+						permissionCheck: createDeniedPermissionCheck(),
+						page:            1,
+						pageSize:        20,
+						expected: struct {
+							success    bool
+							message    string
+							entryCount int
+							total      int
+							pageSize   int
+						}{
+							success: false,
+							message: "Unauthorized: only super user can read audit logs",
+						},
+					},
+					{
+						name:            "Should list newest first for a super user",
+						actorId:         adminID,
+						permissionCheck: createGrantedPermissionCheck(),
+						page:            1,
+						pageSize:        20,
+						expected: struct {
+							success    bool
+							message    string
+							entryCount int
+							total      int
+							pageSize   int
+						}{
+							success:    true,
+							message:    "Audit logs retrieved successfully",
+							entryCount: 2,
+							total:      2,
+							pageSize:   20,
+						},
+					},
+					{
+						name:            "Should filter by event",
+						actorId:         adminID,
+						permissionCheck: createGrantedPermissionCheck(),
+						page:            1,
+						pageSize:        20,
+						event:           user.AuditEventLogin,
+						expected: struct {
+							success    bool
+							message    string
+							entryCount int
+							total      int
+							pageSize   int
+						}{
+							success:    true,
+							message:    "Audit logs retrieved successfully",
+							entryCount: 1,
+							total:      1,
+							pageSize:   20,
+						},
+					},
+					{
+						name:            "Should filter by target user",
+						actorId:         adminID,
+						permissionCheck: createGrantedPermissionCheck(),
+						page:            1,
+						pageSize:        20,
+						filterTargetId:  targetID,
+						expected: struct {
+							success    bool
+							message    string
+							entryCount int
+							total      int
+							pageSize   int
+						}{
+							success:    true,
+							message:    "Audit logs retrieved successfully",
+							entryCount: 2,
+							total:      2,
+							pageSize:   20,
+						},
+					},
+					{
+						name:            "Should paginate",
+						actorId:         adminID,
+						permissionCheck: createGrantedPermissionCheck(),
+						page:            1,
+						pageSize:        1,
+						expected: struct {
+							success    bool
+							message    string
+							entryCount int
+							total      int
+							pageSize   int
+						}{
+							success:    true,
+							message:    "Audit logs retrieved successfully",
+							entryCount: 1,
+							total:      2,
+							pageSize:   1,
+						},
+					},
+				}
+
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			})
+
+			suite.Run(t, "ListAuditLogs validation scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				adminID, _ := setupAdminLog(ctx, app)
+
+				output := app.Service.ListAuditLogs(ctx, &user.ListAuditLogsInput{
+					TraceId:  "trace-list",
+					ActorId:  adminID,
+					Page:     0,
+					PageSize: 20,
+				})
+				assert.False(t, output.Success)
+				assert.Equal(t, "Page must be at least 1", output.Message)
+
+				output = app.Service.ListAuditLogs(ctx, &user.ListAuditLogsInput{
+					TraceId:  "trace-list",
+					ActorId:  adminID,
+					Page:     1,
+					PageSize: 101,
+				})
+				assert.False(t, output.Success)
+				assert.Equal(t, "Page size must be between 1 and 100", output.Message)
+
+				output = app.Service.ListAuditLogs(ctx, &user.ListAuditLogsInput{
+					TraceId:  "trace-list",
+					ActorId:  0,
+					Page:     1,
+					PageSize: 20,
+				})
+				assert.False(t, output.Success)
+				assert.Equal(t, "Actor ID is mandatory", output.Message)
+			})
 		})
 	})
 }

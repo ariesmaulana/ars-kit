@@ -94,6 +94,18 @@ type ServiceFake struct {
 	refreshReturnsOnCall map[int]struct {
 		result1 *user.RefreshOutput
 	}
+	ListAuditLogsStub        func(context.Context, *user.ListAuditLogsInput) *user.ListAuditLogsOutput
+	listAuditLogsMutex       sync.RWMutex
+	listAuditLogsArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.ListAuditLogsInput
+	}
+	listAuditLogsReturns struct {
+		result1 *user.ListAuditLogsOutput
+	}
+	listAuditLogsReturnsOnCall map[int]struct {
+		result1 *user.ListAuditLogsOutput
+	}
 	RegisterStub        func(context.Context, *user.RegisterInput) *user.RegisterOutput
 	registerMutex       sync.RWMutex
 	registerArgsForCall []struct {
@@ -589,6 +601,68 @@ func (fake *ServiceFake) RefreshReturnsOnCall(i int, result1 *user.RefreshOutput
 	}
 	fake.refreshReturnsOnCall[i] = struct {
 		result1 *user.RefreshOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListAuditLogs(arg1 context.Context, arg2 *user.ListAuditLogsInput) *user.ListAuditLogsOutput {
+	fake.listAuditLogsMutex.Lock()
+	ret, specificReturn := fake.listAuditLogsReturnsOnCall[len(fake.listAuditLogsArgsForCall)]
+	fake.listAuditLogsArgsForCall = append(fake.listAuditLogsArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.ListAuditLogsInput
+	}{arg1, arg2})
+	stub := fake.ListAuditLogsStub
+	fakeReturns := fake.listAuditLogsReturns
+	fake.recordInvocation("ListAuditLogs", []interface{}{arg1, arg2})
+	fake.listAuditLogsMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) ListAuditLogsCallCount() int {
+	fake.listAuditLogsMutex.RLock()
+	defer fake.listAuditLogsMutex.RUnlock()
+	return len(fake.listAuditLogsArgsForCall)
+}
+
+func (fake *ServiceFake) ListAuditLogsCalls(stub func(context.Context, *user.ListAuditLogsInput) *user.ListAuditLogsOutput) {
+	fake.listAuditLogsMutex.Lock()
+	defer fake.listAuditLogsMutex.Unlock()
+	fake.ListAuditLogsStub = stub
+}
+
+func (fake *ServiceFake) ListAuditLogsArgsForCall(i int) (context.Context, *user.ListAuditLogsInput) {
+	fake.listAuditLogsMutex.RLock()
+	defer fake.listAuditLogsMutex.RUnlock()
+	argsForCall := fake.listAuditLogsArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) ListAuditLogsReturns(result1 *user.ListAuditLogsOutput) {
+	fake.listAuditLogsMutex.Lock()
+	defer fake.listAuditLogsMutex.Unlock()
+	fake.ListAuditLogsStub = nil
+	fake.listAuditLogsReturns = struct {
+		result1 *user.ListAuditLogsOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListAuditLogsReturnsOnCall(i int, result1 *user.ListAuditLogsOutput) {
+	fake.listAuditLogsMutex.Lock()
+	defer fake.listAuditLogsMutex.Unlock()
+	fake.ListAuditLogsStub = nil
+	if fake.listAuditLogsReturnsOnCall == nil {
+		fake.listAuditLogsReturnsOnCall = make(map[int]struct {
+			result1 *user.ListAuditLogsOutput
+		})
+	}
+	fake.listAuditLogsReturnsOnCall[i] = struct {
+		result1 *user.ListAuditLogsOutput
 	}{result1}
 }
 

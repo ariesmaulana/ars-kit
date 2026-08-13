@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -217,6 +218,79 @@ func (st *storageTx) RevokeAllUserRefreshTokens(ctx context.Context, userID int)
 		return fmt.Errorf("failed to revoke all user refresh tokens: %w", err)
 	}
 	return nil
+}
+
+func (st *storageTx) InsertAuditLog(ctx context.Context, entry AuditEntry) (int64, error) {
+	metadata, err := json.Marshal(entry.Metadata)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal audit metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO audit_log (event, actor_id, target_user_id, metadata)
+		VALUES ($1, $2, $3, $4::jsonb)
+		RETURNING id
+	`
+	var id int64
+	err = st.tx.QueryRow(ctx, query, entry.Event, entry.ActorId, entry.TargetUserId, string(metadata)).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert audit log: %w", err)
+	}
+	return id, nil
+}
+
+func (st *storageTx) CountAuditLogs(ctx context.Context, filter AuditLogFilter) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM audit_log
+		WHERE ($1 = '' OR event = $1)
+		  AND ($2 = 0 OR actor_id = $2)
+		  AND ($3 = 0 OR target_user_id = $3)
+	`
+	var count int
+	err := st.tx.QueryRow(ctx, query, filter.Event, filter.ActorId, filter.TargetUserId).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count audit logs: %w", err)
+	}
+	return count, nil
+}
+
+func (st *storageTx) ListAuditLogs(ctx context.Context, filter AuditLogFilter) ([]AuditEntry, error) {
+	query := `
+		SELECT id, event, actor_id, target_user_id, metadata, created_at
+		FROM audit_log
+		WHERE ($1 = '' OR event = $1)
+		  AND ($2 = 0 OR actor_id = $2)
+		  AND ($3 = 0 OR target_user_id = $3)
+		ORDER BY id DESC
+		LIMIT $4 OFFSET $5
+	`
+	rows, err := st.tx.Query(ctx, query, filter.Event, filter.ActorId, filter.TargetUserId, filter.PageSize, (filter.Page-1)*filter.PageSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list audit logs: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]AuditEntry, 0)
+	for rows.Next() {
+		var entry AuditEntry
+		var metadata []byte
+		if err := rows.Scan(&entry.Id, &entry.Event, &entry.ActorId, &entry.TargetUserId, &metadata, &entry.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan audit log row: %w", err)
+		}
+		if len(metadata) > 0 {
+			if err := json.Unmarshal(metadata, &entry.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal audit metadata: %w", err)
+			}
+		} else {
+			entry.Metadata = map[string]any{}
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate audit log rows: %w", err)
+	}
+	return entries, nil
 }
 
 func convertUserRow(row pgx.Row) (User, error) {

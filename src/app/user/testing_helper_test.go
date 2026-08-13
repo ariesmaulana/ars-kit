@@ -2,6 +2,7 @@ package user_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
@@ -221,6 +222,41 @@ func (h *TestHelper) SetLoginState(ctx context.Context, t *testing.T, id int, st
 	assert.Nil(t, err)
 }
 
+// GetAuditLogs returns every audit log row, newest first.
+func (h *TestHelper) GetAuditLogs(ctx context.Context, t *testing.T) []user.AuditEntry {
+	query := `
+		SELECT id, event, actor_id, target_user_id, metadata, created_at
+		FROM audit_log
+		ORDER BY id
+	`
+	rows, err := h.pool.Query(ctx, query)
+	assert.Nil(t, err)
+	defer rows.Close()
+
+	entries := make([]user.AuditEntry, 0)
+	for rows.Next() {
+		var entry user.AuditEntry
+		var metadata []byte
+		err := rows.Scan(&entry.Id, &entry.Event, &entry.ActorId, &entry.TargetUserId, &metadata, &entry.CreatedAt)
+		assert.Nil(t, err)
+		if len(metadata) > 0 {
+			err = json.Unmarshal(metadata, &entry.Metadata)
+			assert.Nil(t, err)
+		}
+		entries = append(entries, entry)
+	}
+	assert.Nil(t, rows.Err())
+	return entries
+}
+
+// CountAuditLogsByEvent returns how many audit rows match the event.
+func (h *TestHelper) CountAuditLogsByEvent(ctx context.Context, t *testing.T, event string) int {
+	var count int
+	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM audit_log WHERE event = $1", event).Scan(&count)
+	assert.Nil(t, err)
+	return count
+}
+
 // createGrantedPermissionCheck returns a mock result where the user holds the
 // requested permission.
 func createGrantedPermissionCheck() *permission.CheckPermissionOutput {
@@ -320,4 +356,9 @@ func (h *TestHelper) GetUserTokenVersion(ctx context.Context, t *testing.T, user
 	err := h.pool.QueryRow(ctx, "SELECT token_version FROM users WHERE id = $1", userID).Scan(&version)
 	assert.Nil(t, err)
 	return version
+}
+
+// intPtrForTest returns a pointer to v for audit entry fixtures.
+func intPtrForTest(v int) *int {
+	return &v
 }

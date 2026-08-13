@@ -357,6 +357,15 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
+	// Record the successful login in the audit log. The write is best-effort:
+	// a user must never be locked out because the trail insert failed.
+	_ = s.writeAudit(ctx, input.TraceId, AuditEntry{
+		Event:        AuditEventLogin,
+		ActorId:      intPtr(user.Id),
+		TargetUserId: intPtr(user.Id),
+		Metadata:     map[string]any{},
+	})
+
 	log.Info().
 		Str("traceId", input.TraceId).
 		Str("username", input.Username).
@@ -684,7 +693,7 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	defer db.Rollback()
 
 	// Lock user row for update (pessimistic lock)
-	_, errType, err := db.LockUserById(ctx, input.Id)
+	lockedUser, errType, err := db.LockUserById(ctx, input.Id)
 	if err != nil {
 		if errType == ErrTypeNotFound {
 			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
@@ -702,6 +711,24 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	err = db.UpdateUsername(ctx, input.Id, input.NewUsername)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update username")
+		resp.Message = "Failed to update username"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Record the username change in the audit log inside the same transaction
+	// so the rename and its trail commit or roll back together.
+	_, err = db.InsertAuditLog(ctx, AuditEntry{
+		Event:        AuditEventUsername,
+		ActorId:      intPtr(input.Id),
+		TargetUserId: intPtr(input.Id),
+		Metadata: map[string]any{
+			"old_username": lockedUser.Username,
+			"new_username": input.NewUsername,
+		},
+	})
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert audit log")
 		resp.Message = "Failed to update username"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
@@ -850,6 +877,22 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		return resp
 	}
 
+	// Record the password change in the audit log inside the same transaction
+	// so the change and its trail commit or roll back together. The hash is
+	// never stored in the audit row.
+	_, err = db.InsertAuditLog(ctx, AuditEntry{
+		Event:        AuditEventPassword,
+		ActorId:      intPtr(input.Id),
+		TargetUserId: intPtr(input.Id),
+		Metadata:     map[string]any{},
+	})
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert audit log")
+		resp.Message = "Failed to update password"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	// Commit transaction
 	err = db.Commit()
 	if err != nil {
@@ -955,6 +998,16 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		return resp
 	}
 
+	// Record the grant in the audit log. It runs after the permission module
+	// committed the grant, so a failure here is logged, not fatal: the grant
+	// already happened and retrying is safe (grants are idempotent).
+	_ = s.writeAudit(ctx, input.TraceId, AuditEntry{
+		Event:        AuditEventGrant,
+		ActorId:      intPtr(input.ActorId),
+		TargetUserId: intPtr(input.TargetUserId),
+		Metadata:     map[string]any{"permission": input.Permission},
+	})
+
 	resp.Success = true
 	resp.Message = "Permission granted successfully"
 	return resp
@@ -1006,6 +1059,16 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
+
+	// Record the revoke in the audit log. Same semantics as the grant write:
+	// the revoke already committed in the permission module, so a failed trail
+	// insert is logged and the (idempotent) operation still reports success.
+	_ = s.writeAudit(ctx, input.TraceId, AuditEntry{
+		Event:        AuditEventRevoke,
+		ActorId:      intPtr(input.ActorId),
+		TargetUserId: intPtr(input.TargetUserId),
+		Metadata:     map[string]any{"permission": input.Permission},
+	})
 
 	resp.Success = true
 	resp.Message = "Permission revoked successfully"

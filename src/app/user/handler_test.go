@@ -858,3 +858,109 @@ func TestHandlerRevokePermission_NoTokenReturns401(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// ──────────────────────────────────────────────────────────────
+// GET /api/v1/users/audit-logs
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerListAuditLogs_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	actorID := 7
+	now := time.Now().Truncate(time.Second)
+	fake.ListAuditLogsReturns(&user.ListAuditLogsOutput{
+		Success: true,
+		Message: "Audit logs retrieved successfully",
+		Entries: []user.AuditEntry{
+			{
+				Id:           1,
+				Event:        user.AuditEventGrant,
+				ActorId:      &actorID,
+				TargetUserId: intPtrForTest(3),
+				Metadata:     map[string]any{"permission": "user:profile_update"},
+				CreatedAt:    now,
+			},
+		},
+		Page:     1,
+		PageSize: 20,
+		Total:    1,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/audit-logs", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(actorID))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp user.AuditLogListResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	require.Len(t, resp.Data, 1)
+	assert.Equal(t, "grant", resp.Data[0].Event)
+	assert.Equal(t, 7, *resp.Data[0].ActorId)
+	assert.Equal(t, 3, *resp.Data[0].TargetUserId)
+	assert.Equal(t, "user:profile_update", resp.Data[0].Metadata["permission"])
+	require.NotNil(t, resp.Pagination)
+	assert.Equal(t, 1, resp.Pagination.Total)
+	assert.Equal(t, 1, resp.Pagination.TotalPages)
+}
+
+func TestHandlerListAuditLogs_QueryParamsPassedToService(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListAuditLogsReturns(&user.ListAuditLogsOutput{
+		Success:  true,
+		Message:  "Audit logs retrieved successfully",
+		Entries:  []user.AuditEntry{},
+		Page:     2,
+		PageSize: 5,
+		Total:    0,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/audit-logs?page=2&page_size=5&event=login&actor_id=3&target_user_id=4", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	_, input := fake.ListAuditLogsArgsForCall(0)
+	assert.Equal(t, 7, input.ActorId)        // from JWT
+	assert.Equal(t, 2, input.Page)           // from query
+	assert.Equal(t, 5, input.PageSize)       // from query
+	assert.Equal(t, "login", input.Event)    // from query
+	assert.Equal(t, 3, input.FilterActorId)  // from query
+	assert.Equal(t, 4, input.FilterTargetId) // from query
+}
+
+func TestHandlerListAuditLogs_ForbiddenReturns403(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.ListAuditLogsReturns(&user.ListAuditLogsOutput{
+		Success:   false,
+		Message:   "Unauthorized: only super user can read audit logs",
+		ErrorCode: user.ErrorCodeForbidden,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/audit-logs", nil)
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(5))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+
+	var resp user.AuditLogListResponse
+	decodeJSON(t, rec, &resp)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "Unauthorized: only super user can read audit logs", resp.Message)
+}
+
+func TestHandlerListAuditLogs_NoTokenReturns401(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/audit-logs", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

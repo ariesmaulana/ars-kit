@@ -58,6 +58,10 @@ type Service interface {
 	// RevokePermission removes a permission from a target user.
 	// Only a user holding the "<actorId>:super_user" permission may do this.
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+
+	// ListAuditLogs returns one page of audit log entries, newest first.
+	// Only a user holding the "<actorId>:super_user" permission may read the log.
+	ListAuditLogs(ctx context.Context, input *ListAuditLogsInput) *ListAuditLogsOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -248,4 +252,27 @@ type RevokePermissionOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// ListAuditLogsInput represents input for the admin audit log read endpoint.
+type ListAuditLogsInput struct {
+	TraceId        string
+	ActorId        int    // Must hold the "<actorId>:super_user" permission
+	Event          string // optional filter on the recorded event
+	FilterActorId  int    // optional filter on the recorded actor
+	FilterTargetId int    // optional filter on the recorded target user
+	Page           int
+	PageSize       int
+}
+
+// ListAuditLogsOutput represents output after reading the audit log.
+type ListAuditLogsOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Entries   []AuditEntry
+	Page      int
+	PageSize  int
+	Total     int
 }
