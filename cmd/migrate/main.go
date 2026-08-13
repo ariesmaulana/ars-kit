@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"os"
 	"time"
 
@@ -116,15 +115,7 @@ func main() {
 }
 
 func newProvider(db *sql.DB, d database.Domain) (*goose.Provider, error) {
-	sqlFS, err := fs.Sub(d.FS, "sql")
-	if err != nil {
-		return nil, fmt.Errorf("domain %s: sub fs: %w", d.Name, err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, sqlFS)
-	if err != nil {
-		return nil, fmt.Errorf("domain %s: create provider: %w", d.Name, err)
-	}
-	return provider, nil
+	return database.NewProvider(db, d)
 }
 
 func filterDomains(name string) []database.Domain {
