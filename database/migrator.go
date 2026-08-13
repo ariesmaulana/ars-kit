@@ -63,7 +63,7 @@ func Run(db *sql.DB, schema string, domains []Domain) error {
 	for _, d := range domains {
 		provider, err := NewProvider(db, d)
 		if err != nil {
-			return err
+			return fmt.Errorf("migrate %s: %w", d.Name, err)
 		}
 		if _, err := provider.Up(context.Background()); err != nil {
 			return fmt.Errorf("migrate %s: %w", d.Name, err)
