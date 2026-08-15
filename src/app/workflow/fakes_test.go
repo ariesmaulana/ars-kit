@@ -22,6 +22,11 @@ type fakeStore struct {
 	completes []completeCall
 	retries   []retryCall
 	fails     []failCall
+
+	// advanceErr / completeErr inject persistence failures, simulating a DB
+	// outage during Execute so tests can exercise the fail-on-persist-error path.
+	advanceErr  error
+	completeErr error
 }
 
 type advanceCall struct {
@@ -100,6 +105,9 @@ func (f *fakeStore) entity(id int64) *workflow.Entity {
 func (f *fakeStore) AdvanceStep(ctx context.Context, id int64, payload json.RawMessage, nextStep string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.advanceErr != nil {
+		return f.advanceErr
+	}
 	e := f.entity(id)
 	e.Payload = append(json.RawMessage(nil), payload...)
 	e.CurrentStep = nextStep
@@ -114,6 +122,9 @@ func (f *fakeStore) AdvanceStep(ctx context.Context, id int64, payload json.RawM
 func (f *fakeStore) Complete(ctx context.Context, id int64, payload json.RawMessage) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.completeErr != nil {
+		return f.completeErr
+	}
 	e := f.entity(id)
 	e.Payload = append(json.RawMessage(nil), payload...)
 	e.Status = workflow.StatusDone

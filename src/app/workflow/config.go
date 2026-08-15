@@ -30,6 +30,14 @@ type Config struct {
 	// drains a non-empty batch polls again immediately (hot loop); it only
 	// sleeps PollInterval when nothing is queued.
 	BatchSize int
+
+	// StepTimeout bounds how long a single step may run before it is
+	// cancelled and treated as a failed attempt (retry, then fail once
+	// MaxRetries is exhausted). Without it a hung step keeps the job
+	// 'processing' forever and another worker eventually re-acquires it after
+	// StaleTimeout — executing the same step twice. It must be smaller than
+	// StaleTimeout.
+	StepTimeout time.Duration
 }
 
 // DefaultConfig returns the recommended production defaults.
@@ -40,5 +48,6 @@ func DefaultConfig() Config {
 		StaleTimeout: 3 * time.Minute,
 		DrainTimeout: 30 * time.Second,
 		BatchSize:    5,
+		StepTimeout:  60 * time.Second,
 	}
 }

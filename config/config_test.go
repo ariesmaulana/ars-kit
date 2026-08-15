@@ -64,6 +64,42 @@ func TestInitConfigLoginThrottleCustom(t *testing.T) {
 	}
 }
 
+func TestInitConfigWorkflowStepTimeoutDefault(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := config.InitConfig()
+	if err != nil {
+		t.Fatalf("InitConfig() error = %v", err)
+	}
+
+	if cfg.WorkflowStepTimeoutSec != 60 {
+		t.Errorf("WorkflowStepTimeoutSec = %d, want default 60", cfg.WorkflowStepTimeoutSec)
+	}
+}
+
+func TestInitConfigWorkflowStepTimeoutCustom(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("WORKFLOW_STEP_TIMEOUT", "15")
+
+	cfg, err := config.InitConfig()
+	if err != nil {
+		t.Fatalf("InitConfig() error = %v", err)
+	}
+
+	if cfg.WorkflowStepTimeoutSec != 15 {
+		t.Errorf("WorkflowStepTimeoutSec = %d, want 15", cfg.WorkflowStepTimeoutSec)
+	}
+}
+
+func TestInitConfigWorkflowStepTimeoutInvalid(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("WORKFLOW_STEP_TIMEOUT", "soon")
+
+	if _, err := config.InitConfig(); err == nil {
+		t.Fatal("InitConfig() error = nil, want an error for non-numeric WORKFLOW_STEP_TIMEOUT")
+	}
+}
+
 func TestInitConfigLoginThrottleInvalid(t *testing.T) {
 	for _, tc := range []struct {
 		name string

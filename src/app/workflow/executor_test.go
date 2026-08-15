@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	"github.com/stretchr/testify/assert"
@@ -244,6 +245,109 @@ func TestExecutorFailsLoudlyOnUnmarshalError(t *testing.T) {
 	assert.Contains(t, fs.fails[0].lastErr, "unmarshal payload")
 	assert.Empty(t, fs.advances)
 	assert.Empty(t, fs.retries)
+}
+
+// hangStep signals when it starts, then blocks until its context is cancelled
+// (as a real step observing cancellation would) — simulating a hung step that
+// gets reclaimed by the StepTimeout.
+type hangStep struct {
+	started chan struct{}
+}
+
+func (s *hangStep) Name() string { return "hangStep" }
+
+func (s *hangStep) Run(ctx context.Context, run *workflow.Run) error {
+	close(s.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestExecutorTimesOutHungStep(t *testing.T) {
+	fs := newFakeStore()
+	step := &hangStep{started: make(chan struct{})}
+	engine := workflow.NewEngine(fs, workflow.Config{StepTimeout: 50 * time.Millisecond})
+	engine.Register(&workflow.Definition{
+		Name:       "hangy",
+		MaxRetries: 0,
+		NewPayload: func() any { return &struct{}{} },
+		Steps:      []workflow.Step{step},
+	})
+	executor := workflow.NewExecutor(engine, fs)
+
+	entity := seedJob(t, fs, "hangy", "trace-1", `{}`, "hangStep", 0)
+	err := executor.Execute(context.Background(), entity)
+
+	// A timed-out step is a handled step failure: the job is failed, and
+	// Execute itself returns nil (nothing to propagate).
+	require.NoError(t, err)
+	require.Len(t, fs.fails, 1)
+	assert.Equal(t, entity.ID, fs.fails[0].id)
+	assert.Contains(t, fs.fails[0].lastErr, "exceeded timeout")
+	assert.Empty(t, fs.retries)
+	assert.Empty(t, fs.advances)
+	assert.Empty(t, fs.completes)
+	assert.Equal(t, json.RawMessage(`{}`), fs.entities[entity.ID].Payload, "timeout must never persist a partial mutation")
+}
+
+func TestExecutorTimeoutRecordsRetryUntilMaxRetries(t *testing.T) {
+	fs := newFakeStore()
+	step := &hangStep{started: make(chan struct{})}
+	engine := workflow.NewEngine(fs, workflow.Config{StepTimeout: 50 * time.Millisecond})
+	engine.Register(&workflow.Definition{
+		Name:       "hangy",
+		MaxRetries: 3,
+		NewPayload: func() any { return &struct{}{} },
+		Steps:      []workflow.Step{step},
+	})
+	executor := workflow.NewExecutor(engine, fs)
+
+	entity := seedJob(t, fs, "hangy", "trace-1", `{}`, "hangStep", 0)
+	require.NoError(t, executor.Execute(context.Background(), entity))
+
+	require.Len(t, fs.retries, 1)
+	assert.Equal(t, 1, fs.retries[0].retryCount)
+	assert.Contains(t, fs.retries[0].lastErr, "exceeded timeout")
+	assert.Empty(t, fs.fails, "with retries left a timeout must retry, not fail")
+}
+
+func TestExecutorReturnsErrorWhenAdvanceFails(t *testing.T) {
+	fs := newFakeStore()
+	fs.advanceErr = errors.New("connection reset")
+	userSvc := successUserSvc(42)
+	executor := workflow.NewExecutor(newTestEngine(fs, workflow.DemoWorkflow(userSvc)), fs)
+
+	entity := seedJob(t, fs, "demo", "trace-1", demoPayload, "RegisterUser", 0)
+	err := executor.Execute(context.Background(), entity)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "advance step")
+	assert.Contains(t, err.Error(), "connection reset")
+	// The step ran and mutated the in-memory payload, but nothing reached the
+	// store. The executor surfaces the error; the worker decides to fail.
+	assert.Empty(t, fs.fails)
+	assert.Empty(t, fs.retries)
+	assert.Empty(t, fs.advances)
+	assert.Empty(t, fs.completes)
+	assert.Equal(t, json.RawMessage(demoPayload), fs.entities[entity.ID].Payload,
+		"a failed advance must not write a partial payload")
+}
+
+func TestExecutorReturnsErrorWhenCompleteFails(t *testing.T) {
+	fs := newFakeStore()
+	fs.completeErr = errors.New("connection reset")
+	userSvc := successUserSvc(42)
+	executor := workflow.NewExecutor(newTestEngine(fs, workflow.DemoWorkflow(userSvc)), fs)
+
+	entity := seedJob(t, fs, "demo", "trace-1", `{"Email":"jane@example.com","Username":"janedoe","UserID":42}`, "GrantPermission", 0)
+	err := executor.Execute(context.Background(), entity)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "complete final step")
+	assert.Contains(t, err.Error(), "connection reset")
+	assert.Empty(t, fs.fails)
+	assert.Empty(t, fs.completes)
+	assert.Equal(t, workflow.StatusProcessing, fs.entities[entity.ID].Status,
+		"the job stays processing until the worker decides its fate")
 }
 
 func TestExecutorResumesFromPersistedPayload(t *testing.T) {

@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -91,6 +92,50 @@ func (s *blockingStep) Run(ctx context.Context, run *workflow.Run) error {
 	<-s.release
 	close(s.done)
 	return nil
+}
+
+func TestWorkerFailsJobWhenPersistFails(t *testing.T) {
+	// A step succeeds in memory but AdvanceStep fails (DB outage): the worker
+	// must fail the job via store.Fail instead of leaving it 'processing' with
+	// a lost mutation.
+	fs := newFakeStore()
+	fs.advanceErr = errors.New("connection reset")
+	userSvc := successUserSvc(42)
+	engine := workflow.NewEngine(fs, workflow.Config{
+		Workers: 1, PollInterval: time.Millisecond, StaleTimeout: time.Minute,
+	})
+	engine.Register(workflow.DemoWorkflow(userSvc))
+
+	_, err := fs.Insert(context.Background(), "demo", "trace-1", json.RawMessage(demoPayload), "RegisterUser")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		engine.Run(ctx)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		return len(fs.fails) == 1
+	}, 3*time.Second, 5*time.Millisecond)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine.Run did not return after ctx cancellation")
+	}
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	require.Len(t, fs.fails, 1)
+	assert.Contains(t, fs.fails[0].lastErr, "connection reset")
+	assert.Equal(t, workflow.StatusFailed, fs.entities[1].Status,
+		"a job whose success outcome could not be persisted must be failed, not left processing")
+	assert.Empty(t, fs.advances)
 }
 
 func TestWorkerFinishesAcquiredJobAfterCancel(t *testing.T) {

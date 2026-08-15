@@ -86,6 +86,7 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 		StaleTimeout: time.Duration(conf.WorkflowStaleTimeoutMin) * time.Minute,
 		DrainTimeout: time.Duration(conf.WorkflowDrainTimeoutSec) * time.Second,
 		BatchSize:    conf.WorkflowBatchSize,
+		StepTimeout:  time.Duration(conf.WorkflowStepTimeoutSec) * time.Second,
 	})
 
 	// end of foundation module
