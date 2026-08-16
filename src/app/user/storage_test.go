@@ -8,6 +8,7 @@ import (
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStorageInsertUser(t *testing.T) {
@@ -365,6 +366,70 @@ func TestStorageResetLoginState(t *testing.T) {
 				assert.Equal(t, 0, state.FailedAttempts)
 				assert.Nil(t, state.LastFailedLoginAt)
 				assert.Nil(t, state.LockedUntil)
+			})
+		})
+	})
+}
+
+func TestStorageRefreshTokenLifecycle(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage RefreshToken", func() {
+			suite.Runs(t, "Should insert, lock-read, revoke, bump version and revoke-all", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "rttokenuser", "rt@example.com", "RT User", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				require.NoError(t, err)
+				defer tx.Rollback()
+
+				// A fresh user starts at token_version 0.
+				version, err := tx.GetUserTokenVersion(ctx, existingUser.Id)
+				require.NoError(t, err)
+				assert.Equal(t, 0, version)
+
+				expiresAt := time.Now().Add(time.Hour)
+				require.NoError(t, tx.InsertRefreshToken(ctx, existingUser.Id, "abcd1234", version, expiresAt))
+
+				rt, err := tx.GetRefreshToken(ctx, "abcd1234")
+				require.NoError(t, err)
+				assert.Equal(t, existingUser.Id, rt.UserId)
+				assert.Equal(t, "abcd1234", rt.TokenHash)
+				assert.Equal(t, version, rt.TokenVersion)
+				assert.Nil(t, rt.RevokedAt)
+
+				require.NoError(t, tx.RevokeRefreshToken(ctx, rt.Id))
+				rtAfter, err := tx.GetRefreshToken(ctx, "abcd1234")
+				require.NoError(t, err)
+				require.NotNil(t, rtAfter.RevokedAt)
+
+				// Bumping the version and revoking all rows invalidates every
+				// refresh token of the user in one shot.
+				require.NoError(t, tx.InsertRefreshToken(ctx, existingUser.Id, "efgh5678", version, expiresAt))
+				require.NoError(t, tx.BumpUserTokenVersion(ctx, existingUser.Id))
+				require.NoError(t, tx.RevokeAllUserRefreshTokens(ctx, existingUser.Id))
+
+				bumped, err := tx.GetUserTokenVersion(ctx, existingUser.Id)
+				require.NoError(t, err)
+				assert.Equal(t, 1, bumped)
+
+				require.NoError(t, tx.Commit())
+
+				assert.Equal(t, 2, app.Helper.CountRefreshTokens(ctx, t, existingUser.Id))
+				assert.Equal(t, 0, app.Helper.CountActiveRefreshTokens(ctx, t, existingUser.Id))
+			})
+
+			suite.Runs(t, "Should error when the token hash is unknown", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				require.NoError(t, err)
+				defer tx.Rollback()
+
+				_, err = tx.GetRefreshToken(ctx, "nosuchhash")
+				assert.Error(t, err)
 			})
 		})
 	})
