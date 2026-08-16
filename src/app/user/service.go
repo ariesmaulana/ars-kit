@@ -579,8 +579,7 @@ func (s *service) UpdateProfile(ctx context.Context, input *UpdateProfileInput) 
 // UpdateEmail changes the authenticated user's email address. The new address
 // is normalized (trimmed, lowercased) before storage; the LOWER(email) unique
 // index rejects addresses already in use (case-insensitively) and maps them
-// to ErrorCodeConflict. When a re-verification hook is installed, it runs
-// after the change is committed.
+// to ErrorCodeConflict.
 func (s *service) UpdateEmail(ctx context.Context, input *UpdateEmailInput) *UpdateEmailOutput {
 	resp := &UpdateEmailOutput{TraceId: input.TraceId}
 
