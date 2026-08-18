@@ -69,7 +69,7 @@ func NewJWTService(config JWTConfig) *JWTService {
 	if config.CookieName == "" {
 		config.CookieName = "auth_token"
 	}
-	if config.RefreshCookieName == "" {
+if config.RefreshCookieName == "" {
 		config.RefreshCookieName = "refresh_token"
 	}
 	if config.Issuer == "" {
