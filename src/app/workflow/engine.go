@@ -35,6 +35,9 @@ func NewEngine(store Store, cfg Config) *Engine {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = def.BatchSize
 	}
+	if cfg.StepTimeout <= 0 {
+		cfg.StepTimeout = def.StepTimeout
+	}
 
 	e := &Engine{
 		store:       store,

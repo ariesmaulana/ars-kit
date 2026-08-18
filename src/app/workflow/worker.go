@@ -54,7 +54,17 @@ func (w *worker) Run(ctx context.Context, wg *sync.WaitGroup) {
 		for _, job := range batch {
 			// Deliberately background context: once a job is acquired, let it
 			// finish even if the parent ctx is cancelled mid-step.
-			w.executor.Execute(context.Background(), job)
+			if err := w.executor.Execute(context.Background(), job); err != nil {
+				// Execute only returns an error when persisting the success
+				// outcome (AdvanceStep/Complete) failed: the step ran and mutated
+				// its payload in memory, but that mutation never reached the DB,
+				// so the job's state is inconsistent. Fail it instead of leaving
+				// it 'processing' until stale reclaim re-executes the step.
+				log.Error().Err(err).Int64("job_id", job.ID).Msg("workflow: failed to persist execution result, failing job")
+				if failErr := w.store.Fail(context.Background(), job.ID, err.Error()); failErr != nil {
+					log.Error().Err(failErr).Int64("job_id", job.ID).Msg("workflow: failed to record failure after persist error")
+				}
+			}
 		}
 	}
 }

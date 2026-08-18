@@ -36,6 +36,7 @@ type Config struct {
 	WorkflowStaleTimeoutMin int // Processing lock lifetime in minutes (default: 3)
 	WorkflowDrainTimeoutSec int // Shutdown drain wait in seconds (default: 30)
 	WorkflowBatchSize       int // Jobs claimed per poll (default: 5)
+	WorkflowStepTimeoutSec  int // Per-step execution timeout in seconds (default: 60)
 
 	JWTSecret       string
 	CORSAllowOrigin string
@@ -116,6 +117,10 @@ func InitConfig() (*Config, error) {
 		errs = append(errs, err)
 	}
 	cfg.WorkflowBatchSize, err = parseIntEnv("WORKFLOW_BATCH_SIZE", envs, 5)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.WorkflowStepTimeoutSec, err = parseIntEnv("WORKFLOW_STEP_TIMEOUT", envs, 60)
 	if err != nil {
 		errs = append(errs, err)
 	}
