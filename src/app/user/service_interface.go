@@ -25,8 +25,22 @@ type Service interface {
 	// check. It is the seam the demo workflow's GrantPermission step calls.
 	GrantPermissionSystem(ctx context.Context, input *workflow.GrantPermissionInput) *workflow.GrantPermissionOutput
 
-	// Login authenticates a user
+	// Login authenticates a user. On success the output carries the freshly
+	// issued access and refresh tokens (the refresh token is persisted
+	// server-side for rotation and revocation).
 	Login(ctx context.Context, input *LoginInput) *LoginOutput
+
+	// Refresh rotates a refresh token: it revokes the presented token and
+	// issues a fresh access + refresh pair, so a stolen refresh token can only
+	// be used once. The refresh fails when the token is unknown, revoked,
+	// expired, or the user's token_version has moved past the version the
+	// token was issued at (password change).
+	Refresh(ctx context.Context, input *RefreshInput) *RefreshOutput
+
+	// Logout revokes the presented refresh token server-side so it cannot be
+	// replayed. It is idempotent: revoking an already-revoked or unknown token
+	// still reports success (the client clears its cookies either way).
+	Logout(ctx context.Context, input *LogoutInput) *LogoutOutput
 
 	// UpdateUsername updates a user's username
 	UpdateUsername(ctx context.Context, input *UpdateUsernameInput) *UpdateUsernameOutput
@@ -90,12 +104,15 @@ type RegisterInput struct {
 }
 
 // RegisterOutput represents output after user registration
+// On success it also carries the freshly issued access and refresh tokens.
 type RegisterOutput struct {
-	Success   bool
-	Message   string
-	TraceId   string
-	ErrorCode ErrorCode
-	User      User
+	Success      bool
+	Message      string
+	TraceId      string
+	ErrorCode    ErrorCode
+	User         User
+	AccessToken  string
+	RefreshToken string
 }
 
 // LoginInput represents input for user login
@@ -108,7 +125,8 @@ type LoginInput struct {
 // LoginOutput represents output after user login
 //
 // When ErrorCode is ErrorCodeLocked, LockedUntil and RetryAfterSeconds expose
-// the lockout state so clients can show when the account unlocks.
+// the lockout state so clients can show when the account unlocks. On success
+// it also carries the freshly issued access and refresh tokens.
 type LoginOutput struct {
 	Success           bool
 	Message           string
@@ -117,6 +135,40 @@ type LoginOutput struct {
 	User              User
 	LockedUntil       *time.Time
 	RetryAfterSeconds int
+	AccessToken       string
+	RefreshToken      string
+}
+
+// RefreshInput represents input for rotating a refresh token.
+type RefreshInput struct {
+	TraceId      string
+	RefreshToken string
+}
+
+// RefreshOutput represents output after rotating a refresh token. On success
+// it carries the new access and refresh tokens plus the authenticated user.
+type RefreshOutput struct {
+	Success      bool
+	Message      string
+	TraceId      string
+	ErrorCode    ErrorCode
+	User         User
+	AccessToken  string
+	RefreshToken string
+}
+
+// LogoutInput represents input for revoking a refresh token.
+type LogoutInput struct {
+	TraceId      string
+	RefreshToken string
+}
+
+// LogoutOutput represents output after logging out.
+type LogoutOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 // UpdateUsernameInput represents input for updating username

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,6 +25,19 @@ func NewStorage(pool *pgxpool.Pool) Storage {
 	return &storage{
 		pool: pool,
 	}
+}
+
+// GetUserTokenVersion reads a user's current token_version outside a
+// transaction. Used by the JWT middleware to reject tokens minted before a
+// security event (password change).
+func (s *storage) GetUserTokenVersion(ctx context.Context, id int) (int, error) {
+	query := `SELECT token_version FROM users WHERE id = $1`
+	var version int
+	err := s.pool.QueryRow(ctx, query, id).Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get user token version: %w", err)
+	}
+	return version, nil
 }
 
 // BeginTx starts a new database transaction
@@ -122,6 +136,87 @@ func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErr
 		return User{}, ErrTypeCommon, fmt.Errorf("failed to lock user by id: %w", err)
 	}
 	return user, ErrTypeNone, nil
+}
+
+func (st *storageTx) GetUserTokenVersion(ctx context.Context, id int) (int, error) {
+	query := `SELECT token_version FROM users WHERE id = $1`
+	var version int
+	err := st.tx.QueryRow(ctx, query, id).Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get user token version: %w", err)
+	}
+	return version, nil
+}
+
+// BumpUserTokenVersion increments a user's token_version, invalidating every
+// access and refresh token issued at an earlier version.
+func (st *storageTx) BumpUserTokenVersion(ctx context.Context, id int) error {
+	query := `UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to bump user token version: %w", err)
+	}
+	return nil
+}
+
+// InsertRefreshToken records a newly issued refresh token hash. tokenHash must
+// be the SHA-256 hash of the opaque token; tokenVersion is a snapshot of
+// users.token_version at issuance.
+func (st *storageTx) InsertRefreshToken(ctx context.Context, userID int, tokenHash string, tokenVersion int, expiresAt time.Time) error {
+	query := `INSERT INTO refresh_tokens (user_id, token_hash, token_version, expires_at) VALUES ($1, $2, $3, $4)`
+	_, err := st.tx.Exec(ctx, query, userID, tokenHash, tokenVersion, expiresAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert refresh token: %w", err)
+	}
+	return nil
+}
+
+// GetRefreshToken reads a refresh token row by its hash, locking it FOR
+// UPDATE so two concurrent refreshes with the same token cannot both rotate
+// it. Any error (including pgx.ErrNoRows) means the token is unknown.
+func (st *storageTx) GetRefreshToken(ctx context.Context, tokenHash string) (RefreshToken, error) {
+	query := `
+		SELECT id, user_id, token_hash, token_version, expires_at, revoked_at, created_at, updated_at
+		FROM refresh_tokens
+		WHERE token_hash = $1
+		FOR UPDATE
+	`
+	var rt RefreshToken
+	err := st.tx.QueryRow(ctx, query, tokenHash).Scan(
+		&rt.Id,
+		&rt.UserId,
+		&rt.TokenHash,
+		&rt.TokenVersion,
+		&rt.ExpiresAt,
+		&rt.RevokedAt,
+		&rt.CreatedAt,
+		&rt.UpdatedAt,
+	)
+	if err != nil {
+		return RefreshToken{}, fmt.Errorf("failed to get refresh token: %w", err)
+	}
+	return rt, nil
+}
+
+// RevokeRefreshToken marks a refresh token row revoked by id.
+func (st *storageTx) RevokeRefreshToken(ctx context.Context, id int) error {
+	query := `UPDATE refresh_tokens SET revoked_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh token: %w", err)
+	}
+	return nil
+}
+
+// RevokeAllUserRefreshTokens marks every active refresh token of a user
+// revoked (cleanup when token_version is bumped).
+func (st *storageTx) RevokeAllUserRefreshTokens(ctx context.Context, userID int) error {
+	query := `UPDATE refresh_tokens SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`
+	_, err := st.tx.Exec(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke all user refresh tokens: %w", err)
+	}
+	return nil
 }
 
 func convertUserRow(row pgx.Row) (User, error) {

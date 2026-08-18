@@ -70,6 +70,30 @@ type ServiceFake struct {
 	loginReturnsOnCall map[int]struct {
 		result1 *user.LoginOutput
 	}
+	LogoutStub        func(context.Context, *user.LogoutInput) *user.LogoutOutput
+	logoutMutex       sync.RWMutex
+	logoutArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.LogoutInput
+	}
+	logoutReturns struct {
+		result1 *user.LogoutOutput
+	}
+	logoutReturnsOnCall map[int]struct {
+		result1 *user.LogoutOutput
+	}
+	RefreshStub        func(context.Context, *user.RefreshInput) *user.RefreshOutput
+	refreshMutex       sync.RWMutex
+	refreshArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.RefreshInput
+	}
+	refreshReturns struct {
+		result1 *user.RefreshOutput
+	}
+	refreshReturnsOnCall map[int]struct {
+		result1 *user.RefreshOutput
+	}
 	RegisterStub        func(context.Context, *user.RegisterInput) *user.RegisterOutput
 	registerMutex       sync.RWMutex
 	registerArgsForCall []struct {
@@ -441,6 +465,130 @@ func (fake *ServiceFake) LoginReturnsOnCall(i int, result1 *user.LoginOutput) {
 	}
 	fake.loginReturnsOnCall[i] = struct {
 		result1 *user.LoginOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) Logout(arg1 context.Context, arg2 *user.LogoutInput) *user.LogoutOutput {
+	fake.logoutMutex.Lock()
+	ret, specificReturn := fake.logoutReturnsOnCall[len(fake.logoutArgsForCall)]
+	fake.logoutArgsForCall = append(fake.logoutArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.LogoutInput
+	}{arg1, arg2})
+	stub := fake.LogoutStub
+	fakeReturns := fake.logoutReturns
+	fake.recordInvocation("Logout", []interface{}{arg1, arg2})
+	fake.logoutMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) LogoutCallCount() int {
+	fake.logoutMutex.RLock()
+	defer fake.logoutMutex.RUnlock()
+	return len(fake.logoutArgsForCall)
+}
+
+func (fake *ServiceFake) LogoutCalls(stub func(context.Context, *user.LogoutInput) *user.LogoutOutput) {
+	fake.logoutMutex.Lock()
+	defer fake.logoutMutex.Unlock()
+	fake.LogoutStub = stub
+}
+
+func (fake *ServiceFake) LogoutArgsForCall(i int) (context.Context, *user.LogoutInput) {
+	fake.logoutMutex.RLock()
+	defer fake.logoutMutex.RUnlock()
+	argsForCall := fake.logoutArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) LogoutReturns(result1 *user.LogoutOutput) {
+	fake.logoutMutex.Lock()
+	defer fake.logoutMutex.Unlock()
+	fake.LogoutStub = nil
+	fake.logoutReturns = struct {
+		result1 *user.LogoutOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) LogoutReturnsOnCall(i int, result1 *user.LogoutOutput) {
+	fake.logoutMutex.Lock()
+	defer fake.logoutMutex.Unlock()
+	fake.LogoutStub = nil
+	if fake.logoutReturnsOnCall == nil {
+		fake.logoutReturnsOnCall = make(map[int]struct {
+			result1 *user.LogoutOutput
+		})
+	}
+	fake.logoutReturnsOnCall[i] = struct {
+		result1 *user.LogoutOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) Refresh(arg1 context.Context, arg2 *user.RefreshInput) *user.RefreshOutput {
+	fake.refreshMutex.Lock()
+	ret, specificReturn := fake.refreshReturnsOnCall[len(fake.refreshArgsForCall)]
+	fake.refreshArgsForCall = append(fake.refreshArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.RefreshInput
+	}{arg1, arg2})
+	stub := fake.RefreshStub
+	fakeReturns := fake.refreshReturns
+	fake.recordInvocation("Refresh", []interface{}{arg1, arg2})
+	fake.refreshMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) RefreshCallCount() int {
+	fake.refreshMutex.RLock()
+	defer fake.refreshMutex.RUnlock()
+	return len(fake.refreshArgsForCall)
+}
+
+func (fake *ServiceFake) RefreshCalls(stub func(context.Context, *user.RefreshInput) *user.RefreshOutput) {
+	fake.refreshMutex.Lock()
+	defer fake.refreshMutex.Unlock()
+	fake.RefreshStub = stub
+}
+
+func (fake *ServiceFake) RefreshArgsForCall(i int) (context.Context, *user.RefreshInput) {
+	fake.refreshMutex.RLock()
+	defer fake.refreshMutex.RUnlock()
+	argsForCall := fake.refreshArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) RefreshReturns(result1 *user.RefreshOutput) {
+	fake.refreshMutex.Lock()
+	defer fake.refreshMutex.Unlock()
+	fake.RefreshStub = nil
+	fake.refreshReturns = struct {
+		result1 *user.RefreshOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) RefreshReturnsOnCall(i int, result1 *user.RefreshOutput) {
+	fake.refreshMutex.Lock()
+	defer fake.refreshMutex.Unlock()
+	fake.RefreshStub = nil
+	if fake.refreshReturnsOnCall == nil {
+		fake.refreshReturnsOnCall = make(map[int]struct {
+			result1 *user.RefreshOutput
+		})
+	}
+	fake.refreshReturnsOnCall[i] = struct {
+		result1 *user.RefreshOutput
 	}{result1}
 }
 
