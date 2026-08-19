@@ -113,6 +113,17 @@ type StorageTx interface {
 	// ErrTypeNotFound is returned when no user has the given id.
 	SetUserActive(ctx context.Context, id int, isActive bool) (User, StorageErrorType, error)
 
+	// InsertAuditLog records a security-relevant event in the audit log
+	// and returns the new row id.
+	InsertAuditLog(ctx context.Context, entry AuditEntry) (int64, error)
+
+	// CountAuditLogs returns the number of audit entries matching the filter.
+	CountAuditLogs(ctx context.Context, filter AuditLogFilter) (int, error)
+
+	// ListAuditLogs returns one page of audit entries matching the filter,
+	// newest first.
+	ListAuditLogs(ctx context.Context, filter AuditLogFilter) ([]AuditEntry, error)
+
 	// Commit commits the transaction
 	Commit() error
 

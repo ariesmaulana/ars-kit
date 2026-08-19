@@ -734,3 +734,139 @@ func TestStorageUpdateUsername_UniqueViolation(t *testing.T) {
 		})
 	})
 }
+
+func TestStorageAuditLogInsert(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage InsertAuditLog", func() {
+			suite.Runs(t, "Should insert audit entry with metadata and nullable ids", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				actorId := 5
+				targetId := 9
+				id, err := tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:        user.AuditEventGrant,
+					ActorId:      &actorId,
+					TargetUserId: &targetId,
+					Metadata:     map[string]any{"permission": "user:profile_update"},
+				})
+				assert.Nil(t, err)
+				assert.NotZero(t, id)
+
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				require.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventGrant, entries[0].Event)
+				assert.NotNil(t, entries[0].ActorId)
+				assert.Equal(t, 5, *entries[0].ActorId)
+				assert.NotNil(t, entries[0].TargetUserId)
+				assert.Equal(t, 9, *entries[0].TargetUserId)
+				assert.Equal(t, "user:profile_update", entries[0].Metadata["permission"])
+			})
+
+			suite.Runs(t, "Should roll back audit entry with the transaction", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+
+				_, err = tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:    user.AuditEventLogin,
+					Metadata: map[string]any{},
+				})
+				assert.Nil(t, err)
+
+				tx.Rollback()
+
+				entries := app.Helper.GetAuditLogs(ctx, t)
+				assert.Empty(t, entries)
+			})
+		})
+	})
+}
+
+func TestStorageAuditLogList(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage ListAuditLogs", func() {
+			suite.Runs(t, "Should list newest first with filters and pagination", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				// Insert two entries: a login by user 1 and a grant by user 2 to user 3.
+				_, err = tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:        user.AuditEventLogin,
+					ActorId:      intPtrForTest(1),
+					TargetUserId: intPtrForTest(1),
+					Metadata:     map[string]any{},
+				})
+				assert.Nil(t, err)
+				_, err = tx.InsertAuditLog(ctx, user.AuditEntry{
+					Event:        user.AuditEventGrant,
+					ActorId:      intPtrForTest(2),
+					TargetUserId: intPtrForTest(3),
+					Metadata:     map[string]any{"permission": "super_user"},
+				})
+				assert.Nil(t, err)
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				readTx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer readTx.Rollback()
+
+				// No filter: both rows, newest (grant) first.
+				total, err := readTx.CountAuditLogs(ctx, user.AuditLogFilter{Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Equal(t, 2, total)
+
+				entries, err := readTx.ListAuditLogs(ctx, user.AuditLogFilter{Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Len(t, entries, 2)
+				assert.Equal(t, user.AuditEventGrant, entries[0].Event)
+				assert.Equal(t, "super_user", entries[0].Metadata["permission"])
+				assert.Equal(t, user.AuditEventLogin, entries[1].Event)
+
+				// Filter by event.
+				total, err = readTx.CountAuditLogs(ctx, user.AuditLogFilter{Event: user.AuditEventLogin, Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Equal(t, 1, total)
+				entries, err = readTx.ListAuditLogs(ctx, user.AuditLogFilter{Event: user.AuditEventLogin, Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventLogin, entries[0].Event)
+
+				// Filter by actor.
+				total, err = readTx.CountAuditLogs(ctx, user.AuditLogFilter{ActorId: 2, Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Equal(t, 1, total)
+
+				// Filter by target user.
+				total, err = readTx.CountAuditLogs(ctx, user.AuditLogFilter{TargetUserId: 3, Page: 1, PageSize: 20})
+				assert.Nil(t, err)
+				assert.Equal(t, 1, total)
+
+				// Page size 1 returns the newest row only, offset skips it.
+				entries, err = readTx.ListAuditLogs(ctx, user.AuditLogFilter{Page: 1, PageSize: 1})
+				assert.Nil(t, err)
+				assert.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventGrant, entries[0].Event)
+
+				entries, err = readTx.ListAuditLogs(ctx, user.AuditLogFilter{Page: 2, PageSize: 1})
+				assert.Nil(t, err)
+				assert.Len(t, entries, 1)
+				assert.Equal(t, user.AuditEventLogin, entries[0].Event)
+			})
+		})
+	})
+}

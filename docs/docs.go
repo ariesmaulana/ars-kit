@@ -265,6 +265,90 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/users/audit-logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Return a page of audit log entries, newest first. Only a super user may read the log.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "List audit logs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (1-based), default 1",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (1-100), default 20",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event (grant|revoke|password|username|email|login)",
+                        "name": "event",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by the user who performed the action",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Filter by the user the action affected",
+                        "name": "target_user_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuditLogListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuditLogListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuditLogListResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuditLogListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.AuditLogListResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users/login": {
             "post": {
                 "description": "Authenticate user and return JWT token",
@@ -1012,6 +1096,52 @@ const docTemplate = `{
                 },
                 "message": {
                     "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "user.AuditLogDTO": {
+            "type": "object",
+            "properties": {
+                "actor_id": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "event": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "any"
+                    }
+                },
+                "target_user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "user.AuditLogListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/user.AuditLogDTO"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "pagination": {
+                    "$ref": "#/definitions/user.PaginationResponse"
                 },
                 "success": {
                     "type": "boolean"

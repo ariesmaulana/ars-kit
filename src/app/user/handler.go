@@ -112,7 +112,6 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.POST("/permissions/grant", h.GrantPermission)
 	protected.POST("/permissions/revoke", h.RevokePermission)
 
-
 	// Admin routes — user management. Every action is gated by the
 	// "<actorId>:super_user" permission inside the service layer.
 	admin := g.Group("/admin/users")
@@ -123,6 +122,9 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	admin.POST("/:id/reactivate", h.AdminReactivateUser)
 
 	protected.GET("/permissions", h.ListPermissions)
+
+	protected.GET("/audit-logs", h.ListAuditLogs)
+
 }
 
 // HTTP Request/Response structs
@@ -786,6 +788,35 @@ type ManagePermissionResponse struct {
 	Message string `json:"message"`
 }
 
+// AuditLogDTO represents an audit log entry in HTTP responses.
+type AuditLogDTO struct {
+	Id           int64          `json:"id"`
+	Event        string         `json:"event"`
+	ActorId      *int           `json:"actor_id"`
+	TargetUserId *int           `json:"target_user_id"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
+// AuditLogListResponse represents the HTTP response for the audit log list endpoint.
+type AuditLogListResponse struct {
+	Success    bool                `json:"success"`
+	Message    string              `json:"message"`
+	Data       []AuditLogDTO       `json:"data,omitempty"`
+	Pagination *PaginationResponse `json:"pagination,omitempty"`
+}
+
+func toAuditLogDTO(entry AuditEntry) AuditLogDTO {
+	return AuditLogDTO{
+		Id:           entry.Id,
+		Event:        entry.Event,
+		ActorId:      entry.ActorId,
+		TargetUserId: entry.TargetUserId,
+		Metadata:     entry.Metadata,
+		CreatedAt:    entry.CreatedAt,
+	}
+}
+
 // GrantPermission handles POST /api/v1/users/permissions/grant
 // @Summary Grant permission
 // @Description Grant a permission string to a target user. Only super user may do this.
@@ -1222,4 +1253,93 @@ func (h *Handler) ListPermissions(c echo.Context) error {
 			EffectivePermissions: output.Effective,
 		},
 	})
+}
+
+// ListAuditLogs handles GET /api/v1/users/audit-logs
+// @Summary List audit logs
+// @Description Return a page of audit log entries, newest first. Only a super user may read the log.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number (1-based), default 1"
+// @Param page_size query int false "Page size (1-100), default 20"
+// @Param event query string false "Filter by event (grant|revoke|password|username|email|login)"
+// @Param actor_id query int false "Filter by the user who performed the action"
+// @Param target_user_id query int false "Filter by the user the action affected"
+// @Success 200 {object} AuditLogListResponse
+// @Failure 400 {object} AuditLogListResponse
+// @Failure 401 {object} AuditLogListResponse
+// @Failure 403 {object} AuditLogListResponse
+// @Failure 500 {object} AuditLogListResponse
+// @Router /api/v1/users/audit-logs [get]
+func (h *Handler) ListAuditLogs(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, AuditLogListResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	page := 1
+	pageSize := 20
+	if v, err := strconv.Atoi(c.QueryParam("page")); err == nil && v >= 1 {
+		page = v
+	}
+	if v, err := strconv.Atoi(c.QueryParam("page_size")); err == nil && v >= 1 {
+		pageSize = v
+	}
+
+	output := h.service.ListAuditLogs(c.Request().Context(), &ListAuditLogsInput{
+		TraceId:        traceID,
+		ActorId:        actorID,
+		Event:          c.QueryParam("event"),
+		FilterActorId:  parseIntQuery(c.QueryParam("actor_id")),
+		FilterTargetId: parseIntQuery(c.QueryParam("target_user_id")),
+		Page:           page,
+		PageSize:       pageSize,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AuditLogListResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	data := make([]AuditLogDTO, 0, len(output.Entries))
+	for _, entry := range output.Entries {
+		data = append(data, toAuditLogDTO(entry))
+	}
+
+	totalPages := 0
+	if output.PageSize > 0 {
+		totalPages = (output.Total + output.PageSize - 1) / output.PageSize
+	}
+
+	return c.JSON(http.StatusOK, AuditLogListResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    data,
+		Pagination: &PaginationResponse{
+			Page:       output.Page,
+			PageSize:   output.PageSize,
+			Total:      output.Total,
+			TotalPages: totalPages,
+		},
+	})
+}
+
+// parseIntQuery parses an optional integer query parameter, returning 0 when
+// the parameter is absent or not a number.
+func parseIntQuery(v string) int {
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return n
+
 }

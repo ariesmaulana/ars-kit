@@ -71,6 +71,12 @@ layer is httptest against a generated fake; storage is tested directly.
   when the direct checks miss, including the bare `super_user` role wildcard.
   `GET /api/v1/users/permissions` lists a user's effective permissions (direct
   + role-derived); see `src/app/permission/README.md` for the full model.
+- **Audit log (D2)**: the `audit_log` table records security-relevant events
+  (grant/revoke/password/username/email/login) with the actor, the affected
+  user, and event metadata. Self-service changes (username/password) write
+  their trail inside the same transaction as the change; login/grant/revoke
+  writes are best-effort and never fail the primary operation. Only a
+  `super_user` can read the log via `GET /api/v1/users/audit-logs`.
 
 ### Typed operation results
 
