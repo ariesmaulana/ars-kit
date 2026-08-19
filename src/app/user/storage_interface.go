@@ -42,8 +42,18 @@ type StorageTx interface {
 	// GetUserPassword retrieves a user's hashed password
 	GetUserPassword(ctx context.Context, id int) (string, error)
 
-	// UpdateUsername updates a user's username
-	UpdateUsername(ctx context.Context, id int, newUsername string) error
+	// UpdateUsername updates a user's username and returns the updated row.
+	// ErrTypeUniqueConstraint is returned when the new username is already
+	// taken (byte-wise or case-insensitively via the LOWER() index).
+	UpdateUsername(ctx context.Context, id int, newUsername string) (User, StorageErrorType, error)
+
+	// UpdateFullName updates a user's full_name and returns the updated row.
+	UpdateFullName(ctx context.Context, id int, fullName string) (User, StorageErrorType, error)
+
+	// UpdateEmail updates a user's email and returns the updated row.
+	// ErrTypeUniqueConstraint is returned when the new email is already in
+	// use (byte-wise or case-insensitively via the LOWER() index).
+	UpdateEmail(ctx context.Context, id int, email string) (User, StorageErrorType, error)
 
 	// UpdatePassword updates a user's password
 	UpdatePassword(ctx context.Context, id int, newPassword string) error

@@ -178,6 +178,18 @@ type ServiceFake struct {
 	setUserActiveReturnsOnCall map[int]struct {
 		result1 *user.SetUserActiveOutput
 	}
+	UpdateEmailStub        func(context.Context, *user.UpdateEmailInput) *user.UpdateEmailOutput
+	updateEmailMutex       sync.RWMutex
+	updateEmailArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.UpdateEmailInput
+	}
+	updateEmailReturns struct {
+		result1 *user.UpdateEmailOutput
+	}
+	updateEmailReturnsOnCall map[int]struct {
+		result1 *user.UpdateEmailOutput
+	}
 	UpdatePasswordStub        func(context.Context, *user.UpdatePasswordInput) *user.UpdatePasswordOutput
 	updatePasswordMutex       sync.RWMutex
 	updatePasswordArgsForCall []struct {
@@ -189,6 +201,18 @@ type ServiceFake struct {
 	}
 	updatePasswordReturnsOnCall map[int]struct {
 		result1 *user.UpdatePasswordOutput
+	}
+	UpdateProfileStub        func(context.Context, *user.UpdateProfileInput) *user.UpdateProfileOutput
+	updateProfileMutex       sync.RWMutex
+	updateProfileArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.UpdateProfileInput
+	}
+	updateProfileReturns struct {
+		result1 *user.UpdateProfileOutput
+	}
+	updateProfileReturnsOnCall map[int]struct {
+		result1 *user.UpdateProfileOutput
 	}
 	UpdateUsernameStub        func(context.Context, *user.UpdateUsernameInput) *user.UpdateUsernameOutput
 	updateUsernameMutex       sync.RWMutex
@@ -1074,6 +1098,68 @@ func (fake *ServiceFake) SetUserActiveReturnsOnCall(i int, result1 *user.SetUser
 	}{result1}
 }
 
+func (fake *ServiceFake) UpdateEmail(arg1 context.Context, arg2 *user.UpdateEmailInput) *user.UpdateEmailOutput {
+	fake.updateEmailMutex.Lock()
+	ret, specificReturn := fake.updateEmailReturnsOnCall[len(fake.updateEmailArgsForCall)]
+	fake.updateEmailArgsForCall = append(fake.updateEmailArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.UpdateEmailInput
+	}{arg1, arg2})
+	stub := fake.UpdateEmailStub
+	fakeReturns := fake.updateEmailReturns
+	fake.recordInvocation("UpdateEmail", []interface{}{arg1, arg2})
+	fake.updateEmailMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) UpdateEmailCallCount() int {
+	fake.updateEmailMutex.RLock()
+	defer fake.updateEmailMutex.RUnlock()
+	return len(fake.updateEmailArgsForCall)
+}
+
+func (fake *ServiceFake) UpdateEmailCalls(stub func(context.Context, *user.UpdateEmailInput) *user.UpdateEmailOutput) {
+	fake.updateEmailMutex.Lock()
+	defer fake.updateEmailMutex.Unlock()
+	fake.UpdateEmailStub = stub
+}
+
+func (fake *ServiceFake) UpdateEmailArgsForCall(i int) (context.Context, *user.UpdateEmailInput) {
+	fake.updateEmailMutex.RLock()
+	defer fake.updateEmailMutex.RUnlock()
+	argsForCall := fake.updateEmailArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) UpdateEmailReturns(result1 *user.UpdateEmailOutput) {
+	fake.updateEmailMutex.Lock()
+	defer fake.updateEmailMutex.Unlock()
+	fake.UpdateEmailStub = nil
+	fake.updateEmailReturns = struct {
+		result1 *user.UpdateEmailOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UpdateEmailReturnsOnCall(i int, result1 *user.UpdateEmailOutput) {
+	fake.updateEmailMutex.Lock()
+	defer fake.updateEmailMutex.Unlock()
+	fake.UpdateEmailStub = nil
+	if fake.updateEmailReturnsOnCall == nil {
+		fake.updateEmailReturnsOnCall = make(map[int]struct {
+			result1 *user.UpdateEmailOutput
+		})
+	}
+	fake.updateEmailReturnsOnCall[i] = struct {
+		result1 *user.UpdateEmailOutput
+	}{result1}
+}
+
 func (fake *ServiceFake) UpdatePassword(arg1 context.Context, arg2 *user.UpdatePasswordInput) *user.UpdatePasswordOutput {
 	fake.updatePasswordMutex.Lock()
 	ret, specificReturn := fake.updatePasswordReturnsOnCall[len(fake.updatePasswordArgsForCall)]
@@ -1133,6 +1219,68 @@ func (fake *ServiceFake) UpdatePasswordReturnsOnCall(i int, result1 *user.Update
 	}
 	fake.updatePasswordReturnsOnCall[i] = struct {
 		result1 *user.UpdatePasswordOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UpdateProfile(arg1 context.Context, arg2 *user.UpdateProfileInput) *user.UpdateProfileOutput {
+	fake.updateProfileMutex.Lock()
+	ret, specificReturn := fake.updateProfileReturnsOnCall[len(fake.updateProfileArgsForCall)]
+	fake.updateProfileArgsForCall = append(fake.updateProfileArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.UpdateProfileInput
+	}{arg1, arg2})
+	stub := fake.UpdateProfileStub
+	fakeReturns := fake.updateProfileReturns
+	fake.recordInvocation("UpdateProfile", []interface{}{arg1, arg2})
+	fake.updateProfileMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) UpdateProfileCallCount() int {
+	fake.updateProfileMutex.RLock()
+	defer fake.updateProfileMutex.RUnlock()
+	return len(fake.updateProfileArgsForCall)
+}
+
+func (fake *ServiceFake) UpdateProfileCalls(stub func(context.Context, *user.UpdateProfileInput) *user.UpdateProfileOutput) {
+	fake.updateProfileMutex.Lock()
+	defer fake.updateProfileMutex.Unlock()
+	fake.UpdateProfileStub = stub
+}
+
+func (fake *ServiceFake) UpdateProfileArgsForCall(i int) (context.Context, *user.UpdateProfileInput) {
+	fake.updateProfileMutex.RLock()
+	defer fake.updateProfileMutex.RUnlock()
+	argsForCall := fake.updateProfileArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) UpdateProfileReturns(result1 *user.UpdateProfileOutput) {
+	fake.updateProfileMutex.Lock()
+	defer fake.updateProfileMutex.Unlock()
+	fake.UpdateProfileStub = nil
+	fake.updateProfileReturns = struct {
+		result1 *user.UpdateProfileOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UpdateProfileReturnsOnCall(i int, result1 *user.UpdateProfileOutput) {
+	fake.updateProfileMutex.Lock()
+	defer fake.updateProfileMutex.Unlock()
+	fake.UpdateProfileStub = nil
+	if fake.updateProfileReturnsOnCall == nil {
+		fake.updateProfileReturnsOnCall = make(map[int]struct {
+			result1 *user.UpdateProfileOutput
+		})
+	}
+	fake.updateProfileReturnsOnCall[i] = struct {
+		result1 *user.UpdateProfileOutput
 	}{result1}
 }
 

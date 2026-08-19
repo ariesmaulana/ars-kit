@@ -107,6 +107,21 @@ func TestStorageGetUserByUsername(t *testing.T) {
 				_, err = tx.GetUserByUsername(ctx, "nonexistent")
 				assert.NotNil(t, err)
 			})
+
+			suite.Runs(t, "Should find user with different casing (M8 case-insensitive lookup)", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "MixedCaseUser", "mixed@example.com", "Mixed Case", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				retrievedUser, err := tx.GetUserByUsername(ctx, "mixedcaseuser")
+				assert.Nil(t, err)
+				assert.Equal(t, existingUser.Id, retrievedUser.Id)
+			})
 		})
 	})
 }
@@ -157,8 +172,10 @@ func TestStorageUpdateUsername(t *testing.T) {
 				assert.Nil(t, err)
 				defer tx.Rollback()
 
-				err = tx.UpdateUsername(ctx, existingUser.Id, "newusername")
+				updated, errType, err := tx.UpdateUsername(ctx, existingUser.Id, "newusername")
 				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.Equal(t, "newusername", updated.Username)
 
 				err = tx.Commit()
 				assert.Nil(t, err)
@@ -558,6 +575,161 @@ func TestStorageSetUserActive(t *testing.T) {
 				_, errType, err := tx.SetUserActive(ctx, 99999, false)
 				assert.NotNil(t, err)
 				assert.Equal(t, user.ErrTypeNotFound, errType)
+			})
+		})
+	})
+}
+
+func TestStorageUpdateFullName(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage UpdateFullName", func() {
+			suite.Runs(t, "Should update full name and return the updated row", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "fullnameuser", "fullname@example.com", "Old Name", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				updated, errType, err := tx.UpdateFullName(ctx, existingUser.Id, "New Name")
+				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.Equal(t, existingUser.Id, updated.Id)
+				assert.Equal(t, "New Name", updated.FullName)
+				assert.Equal(t, existingUser.Username, updated.Username)
+
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				fetched := app.Helper.GetUserById(ctx, t, existingUser.Id)
+				assert.Equal(t, "New Name", fetched.FullName)
+			})
+
+			suite.Runs(t, "Should return not found for a missing user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateFullName(ctx, 99999, "Some Name")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeNotFound, errType)
+			})
+		})
+	})
+}
+
+func TestStorageUpdateEmail(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage UpdateEmail", func() {
+			suite.Runs(t, "Should update email and return the updated row", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				existingUser := app.Helper.InsertUser(ctx, t, "emailuser", "old@example.com", "Email User", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				updated, errType, err := tx.UpdateEmail(ctx, existingUser.Id, "new@example.com")
+				assert.Nil(t, err)
+				assert.Equal(t, user.ErrTypeNone, errType)
+				assert.Equal(t, existingUser.Id, updated.Id)
+				assert.Equal(t, "new@example.com", updated.Email)
+
+				err = tx.Commit()
+				assert.Nil(t, err)
+
+				fetched := app.Helper.GetUserById(ctx, t, existingUser.Id)
+				assert.Equal(t, "new@example.com", fetched.Email)
+			})
+
+			suite.Runs(t, "Should reject an email already in use (unique violation)", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "takenuser", "taken@example.com", "Taken User", "password123")
+				existingUser := app.Helper.InsertUser(ctx, t, "emailuser2", "old2@example.com", "Email User 2", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateEmail(ctx, existingUser.Id, "taken@example.com")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeUniqueConstraint, errType)
+			})
+
+			suite.Runs(t, "Should reject a case-variant duplicate email (M8)", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "takenuser2", "taken@example.com", "Taken User 2", "password123")
+				existingUser := app.Helper.InsertUser(ctx, t, "emailuser3", "old3@example.com", "Email User 3", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateEmail(ctx, existingUser.Id, "TAKEN@EXAMPLE.COM")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeUniqueConstraint, errType)
+			})
+
+			suite.Runs(t, "Should return not found for a missing user", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateEmail(ctx, 99999, "new@example.com")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeNotFound, errType)
+			})
+		})
+	})
+}
+
+func TestStorageUpdateUsername_UniqueViolation(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage UpdateUsername unique violation", func() {
+			suite.Runs(t, "Should reject a username already in use", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "takenuser", "taken@example.com", "Taken User", "password123")
+				existingUser := app.Helper.InsertUser(ctx, t, "renameuser", "rename@example.com", "Rename User", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateUsername(ctx, existingUser.Id, "takenuser")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeUniqueConstraint, errType)
+			})
+
+			suite.Runs(t, "Should reject a case-variant duplicate username (M8)", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				app.Helper.InsertUser(ctx, t, "TakenUser", "taken2@example.com", "Taken User", "password123")
+				existingUser := app.Helper.InsertUser(ctx, t, "renameuser2", "rename2@example.com", "Rename User 2", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				defer tx.Rollback()
+
+				_, errType, err := tx.UpdateUsername(ctx, existingUser.Id, "takenuser")
+				assert.NotNil(t, err)
+				assert.Equal(t, user.ErrTypeUniqueConstraint, errType)
 			})
 		})
 	})

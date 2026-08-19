@@ -65,16 +65,25 @@ func (st *storageTx) InsertUser(ctx context.Context, username, email, fullName, 
 	var id int
 	err := st.tx.QueryRow(ctx, query, username, email, fullName, password).Scan(&id)
 	if err != nil {
-		if pgErr, ok := err.(*pgconn.PgError); ok {
-			// 23505 is the PostgreSQL error code for unique_violation
-			if pgErr.Code == "23505" || strings.Contains(pgErr.Message, "duplicate key") {
-				return 0, ErrTypeUniqueConstraint, fmt.Errorf("failed to insert user: %w", err)
-			}
+		if isUniqueViolation(err) {
+			return 0, ErrTypeUniqueConstraint, fmt.Errorf("failed to insert user: %w", err)
 		}
 		return 0, ErrTypeCommon, fmt.Errorf("failed to insert user: %w", err)
 	}
 	return id, ErrTypeNone, nil
 }
+
+// isUniqueViolation reports whether err is a PostgreSQL unique_violation
+// (SQLSTATE 23505). The same check backs InsertUser, UpdateUsername, and
+// UpdateEmail, which all rely on the LOWER(username)/LOWER(email) indexes.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" || strings.Contains(pgErr.Message, "duplicate key")
+	}
+	return false
+}
+
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)
@@ -86,7 +95,9 @@ func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 }
 
 func (st *storageTx) GetUserByUsername(ctx context.Context, username string) (User, error) {
-	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE username = $1`
+	// Case-insensitive lookup (M8): the LOWER() unique index guarantees at
+	// most one match, so login works with any casing of the stored username.
+	query := `SELECT id, username, email, full_name, is_active, created_at, updated_at FROM users WHERE LOWER(username) = LOWER($1)`
 	row := st.tx.QueryRow(ctx, query, username)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -105,13 +116,49 @@ func (st *storageTx) GetUserPassword(ctx context.Context, id int) (string, error
 	return password, nil
 }
 
-func (st *storageTx) UpdateUsername(ctx context.Context, id int, newUsername string) error {
-	query := `UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2`
-	_, err := st.tx.Exec(ctx, query, newUsername, id)
+func (st *storageTx) UpdateUsername(ctx context.Context, id int, newUsername string) (User, StorageErrorType, error) {
+	query := `UPDATE users SET username = $1, updated_at = NOW() WHERE id = $2 RETURNING id, username, email, full_name, created_at, updated_at`
+	row := st.tx.QueryRow(ctx, query, newUsername, id)
+	user, err := convertUserRow(row)
 	if err != nil {
-		return fmt.Errorf("failed to update username: %w", err)
+		if isUniqueViolation(err) {
+			return User{}, ErrTypeUniqueConstraint, fmt.Errorf("failed to update username: %w", err)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrTypeNotFound, fmt.Errorf("failed to update username: %w", err)
+		}
+		return User{}, ErrTypeCommon, fmt.Errorf("failed to update username: %w", err)
 	}
-	return nil
+	return user, ErrTypeNone, nil
+}
+
+func (st *storageTx) UpdateFullName(ctx context.Context, id int, fullName string) (User, StorageErrorType, error) {
+	query := `UPDATE users SET full_name = $1, updated_at = NOW() WHERE id = $2 RETURNING id, username, email, full_name, created_at, updated_at`
+	row := st.tx.QueryRow(ctx, query, fullName, id)
+	user, err := convertUserRow(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrTypeNotFound, fmt.Errorf("failed to update full name: %w", err)
+		}
+		return User{}, ErrTypeCommon, fmt.Errorf("failed to update full name: %w", err)
+	}
+	return user, ErrTypeNone, nil
+}
+
+func (st *storageTx) UpdateEmail(ctx context.Context, id int, email string) (User, StorageErrorType, error) {
+	query := `UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2 RETURNING id, username, email, full_name, created_at, updated_at`
+	row := st.tx.QueryRow(ctx, query, email, id)
+	user, err := convertUserRow(row)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return User{}, ErrTypeUniqueConstraint, fmt.Errorf("failed to update email: %w", err)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrTypeNotFound, fmt.Errorf("failed to update email: %w", err)
+		}
+		return User{}, ErrTypeCommon, fmt.Errorf("failed to update email: %w", err)
+	}
+	return user, ErrTypeNone, nil
 }
 
 func (st *storageTx) UpdatePassword(ctx context.Context, id int, newPassword string) error {
