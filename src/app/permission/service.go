@@ -2,7 +2,9 @@ package permission
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -63,6 +65,18 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 		has, err = db.HasPermission(ctx, input.UserID, key(input.UserID, PermissionSuperUser))
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check super user permission")
+			resp.Message = "Failed to check permission"
+			return resp
+		}
+	}
+
+	// Fall back to roles: a role assigned to the user may grant the exact
+	// permission, or the "super_user" wildcard. Roles store bare permissions
+	// (no "<user_id>:" prefix) because they are shared across users.
+	if !has {
+		has, err = db.HasRolePermission(ctx, input.UserID, input.Permission)
+		if err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role permission")
 			resp.Message = "Failed to check permission"
 			return resp
 		}
@@ -161,5 +175,241 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 
 	resp.Success = true
 	resp.Message = "Permission revoked successfully"
+	return resp
+}
+
+func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *CreateRoleOutput {
+	resp := &CreateRoleOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if strings.TrimSpace(input.Name) == "" {
+		log.Warn().Msg("Role name empty")
+		resp.Message = "Role name is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to create role"
+		return resp
+	}
+	defer db.Rollback()
+
+	id, err := db.CreateRole(ctx, strings.TrimSpace(input.Name), input.Description)
+	if err != nil {
+		if errors.Is(err, ErrRoleNameTaken) {
+			log.Warn().Str("traceId", input.TraceId).Str("name", input.Name).Msg("role name already exists")
+			resp.Message = "Role already exists"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to create role")
+		resp.Message = "Failed to create role"
+		return resp
+	}
+
+	role, err := db.GetRoleById(ctx, id)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Int("roleId", id).Msg("failed to load created role")
+		resp.Message = "Failed to create role"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to create role"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role created successfully"
+	resp.Role = *role
+	return resp
+}
+
+func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissionInput) *AddRolePermissionOutput {
+	resp := &AddRolePermissionOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.RoleId == 0 {
+		log.Warn().Msg("Role ID empty")
+		resp.Message = "Role ID is mandatory"
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to add role permission"
+		return resp
+	}
+	defer db.Rollback()
+
+	if _, err := db.GetRoleById(ctx, input.RoleId); err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
+			resp.Message = "Role not found"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
+		resp.Message = "Failed to add role permission"
+		return resp
+	}
+
+	err = db.AddRolePermission(ctx, input.RoleId, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to add role permission")
+		resp.Message = "Failed to add role permission"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to add role permission"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role permission added successfully"
+	return resp
+}
+
+func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *AssignRoleOutput {
+	resp := &AssignRoleOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.UserID == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		return resp
+	}
+	if input.RoleId == 0 {
+		log.Warn().Msg("Role ID empty")
+		resp.Message = "Role ID is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to assign role"
+		return resp
+	}
+	defer db.Rollback()
+
+	if _, err := db.GetRoleById(ctx, input.RoleId); err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
+			resp.Message = "Role not found"
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
+		resp.Message = "Failed to assign role"
+		return resp
+	}
+
+	err = db.AssignRole(ctx, input.UserID, input.RoleId)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to assign role")
+		resp.Message = "Failed to assign role"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to assign role"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role assigned successfully"
+	return resp
+}
+
+func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermissionsInput) *ListUserPermissionsOutput {
+	resp := &ListUserPermissionsOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		return resp
+	}
+	if input.UserID == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to list permissions"
+		return resp
+	}
+	defer db.Rollback()
+
+	direct, err := db.ListDirectPermissions(ctx, input.UserID)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list direct permissions")
+		resp.Message = "Failed to list permissions"
+		return resp
+	}
+
+	roles, err := db.ListUserRoles(ctx, input.UserID)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list user roles")
+		resp.Message = "Failed to list permissions"
+		return resp
+	}
+
+	rolePermissions := make([]RolePermissions, 0, len(roles))
+	for _, role := range roles {
+		perms, err := db.ListRolePermissions(ctx, role.Id)
+		if err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Int("roleId", role.Id).Msg("failed to list role permissions")
+			resp.Message = "Failed to list permissions"
+			return resp
+		}
+		rolePermissions = append(rolePermissions, RolePermissions{
+			Role:        role,
+			Permissions: perms,
+		})
+	}
+
+	effective, err := db.ListUserPermissions(ctx, input.UserID)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list effective permissions")
+		resp.Message = "Failed to list permissions"
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to list permissions"
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Permissions retrieved successfully"
+	resp.Direct = direct
+	resp.Roles = rolePermissions
+	resp.Effective = effective
 	return resp
 }

@@ -1212,3 +1212,59 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	resp.Message = "Permission revoked successfully"
 	return resp
 }
+
+// ListPermissions lists a user's effective permissions. Listing your own
+// permissions needs no special permission; listing another user's requires the
+// actor to hold the "<actorId>:super_user" permission. The permission module
+// owns the actual listing; this seam only enforces who may read whom.
+func (s *service) ListPermissions(ctx context.Context, input *ListPermissionsInput) *ListPermissionsOutput {
+	resp := &ListPermissionsOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	target := input.TargetUserId
+	if target == 0 {
+		target = input.ActorId
+	}
+
+	if target != input.ActorId && !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can view other users' permissions"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	output := s.permissionService.ListUserPermissions(ctx, &permission.ListUserPermissionsInput{
+		TraceId: input.TraceId,
+		UserID:  target,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Permissions retrieved successfully"
+	resp.Direct = output.Direct
+	resp.Effective = output.Effective
+	for _, rp := range output.Roles {
+		resp.Roles = append(resp.Roles, PermissionRole{
+			Id:          rp.Role.Id,
+			Name:        rp.Role.Name,
+			Description: rp.Role.Description,
+			Permissions: rp.Permissions,
+		})
+	}
+	return resp
+}

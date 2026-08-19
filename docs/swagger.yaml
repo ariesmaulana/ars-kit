@@ -24,16 +24,29 @@ definitions:
     type: object
   user.AuthResponse:
     properties:
+      locked_until:
+        type: string
       message:
         type: string
       refresh_token:
         type: string
+      retry_after_seconds:
+        type: integer
       success:
         type: boolean
       token:
         type: string
       user:
         $ref: '#/definitions/user.UserDTO'
+    type: object
+  user.ListPermissionsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/user.UserPermissionsDTO'
+      message:
+        type: string
+      success:
+        type: boolean
     type: object
   user.LoginRequest:
     properties:
@@ -62,11 +75,6 @@ definitions:
       success:
         type: boolean
     type: object
-  user.RefreshRequest:
-    properties:
-      refresh_token:
-        type: string
-    type: object
   user.PaginationResponse:
     properties:
       page:
@@ -77,6 +85,24 @@ definitions:
         type: integer
       total_pages:
         type: integer
+    type: object
+  user.PermissionRoleDTO:
+    properties:
+      description:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      permissions:
+        items:
+          type: string
+        type: array
+    type: object
+  user.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
     type: object
   user.RegisterRequest:
     properties:
@@ -147,6 +173,23 @@ definitions:
         type: string
       username:
         type: string
+    type: object
+  user.UserPermissionsDTO:
+    properties:
+      direct_permissions:
+        items:
+          type: string
+        type: array
+      effective_permissions:
+        items:
+          type: string
+        type: array
+      roles:
+        items:
+          $ref: '#/definitions/user.PermissionRoleDTO'
+        type: array
+      user_id:
+        type: integer
     type: object
   user.UserResponse:
     properties:
@@ -380,6 +423,48 @@ paths:
           schema:
             $ref: '#/definitions/user.UserResponse'
       summary: Logout user
+      tags:
+      - users
+  /api/v1/users/permissions:
+    get:
+      consumes:
+      - application/json
+      description: |-
+        List a user's effective permissions: direct grants plus
+        role-derived permissions, with roles broken out separately.
+        Lists the authenticated user by default; an optional user_id
+        query parameter lists another user and requires super user.
+      parameters:
+      - description: Target user id (defaults to the authenticated user)
+        in: query
+        name: user_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.ListPermissionsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.ListPermissionsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.ListPermissionsResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.ListPermissionsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.ListPermissionsResponse'
+      security:
+      - BearerAuth: []
+      summary: List permissions
       tags:
       - users
   /api/v1/users/permissions/grant:

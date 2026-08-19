@@ -112,6 +112,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.POST("/permissions/grant", h.GrantPermission)
 	protected.POST("/permissions/revoke", h.RevokePermission)
 
+
 	// Admin routes — user management. Every action is gated by the
 	// "<actorId>:super_user" permission inside the service layer.
 	admin := g.Group("/admin/users")
@@ -120,6 +121,8 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	admin.GET("/:id", h.AdminGetUserById)
 	admin.POST("/:id/deactivate", h.AdminDeactivateUser)
 	admin.POST("/:id/reactivate", h.AdminReactivateUser)
+
+	protected.GET("/permissions", h.ListPermissions)
 }
 
 // HTTP Request/Response structs
@@ -1119,4 +1122,104 @@ func queryInt(c echo.Context, name string, def int) (int, error) {
 		return 0, err
 	}
 	return v, nil
+}
+
+// ListPermissionsResponse represents the HTTP response for GET /users/permissions
+type ListPermissionsResponse struct {
+	Success bool                `json:"success"`
+	Message string              `json:"message"`
+	Data    *UserPermissionsDTO `json:"data,omitempty"`
+}
+
+// UserPermissionsDTO is the permission listing payload: direct grants, the
+// roles the user holds (with each role's permissions), and the deduplicated
+// effective union of both.
+type UserPermissionsDTO struct {
+	UserId               int                 `json:"user_id"`
+	DirectPermissions    []string            `json:"direct_permissions"`
+	Roles                []PermissionRoleDTO `json:"roles"`
+	EffectivePermissions []string            `json:"effective_permissions"`
+}
+
+// PermissionRoleDTO is a role in a permission listing.
+type PermissionRoleDTO struct {
+	Id          int      `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+}
+
+// ListPermissions handles GET /api/v1/users/permissions
+// @Summary List permissions
+// @Description List a user's effective permissions: direct grants plus
+// @Description role-derived permissions, with roles broken out separately.
+// @Description Lists the authenticated user by default; an optional user_id
+// @Description query parameter lists another user and requires super user.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param user_id query int false "Target user id (defaults to the authenticated user)"
+// @Success 200 {object} ListPermissionsResponse
+// @Failure 400 {object} ListPermissionsResponse
+// @Failure 401 {object} ListPermissionsResponse
+// @Failure 403 {object} ListPermissionsResponse
+// @Failure 500 {object} ListPermissionsResponse
+// @Router /api/v1/users/permissions [get]
+func (h *Handler) ListPermissions(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ListPermissionsResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	targetUserID := actorID
+	if v := c.QueryParam("user_id"); v != "" {
+		id, err := strconv.Atoi(v)
+		if err != nil || id <= 0 {
+			return c.JSON(http.StatusBadRequest, ListPermissionsResponse{
+				Success: false,
+				Message: "Invalid user_id",
+			})
+		}
+		targetUserID = id
+	}
+
+	output := h.service.ListPermissions(c.Request().Context(), &ListPermissionsInput{
+		TraceId:      traceID,
+		ActorId:      actorID,
+		TargetUserId: targetUserID,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), ListPermissionsResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	roles := make([]PermissionRoleDTO, 0, len(output.Roles))
+	for _, r := range output.Roles {
+		roles = append(roles, PermissionRoleDTO{
+			Id:          r.Id,
+			Name:        r.Name,
+			Description: r.Description,
+			Permissions: r.Permissions,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ListPermissionsResponse{
+		Success: true,
+		Message: "Permissions retrieved successfully",
+		Data: &UserPermissionsDTO{
+			UserId:               targetUserID,
+			DirectPermissions:    output.Direct,
+			Roles:                roles,
+			EffectivePermissions: output.Effective,
+		},
+	})
 }

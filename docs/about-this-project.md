@@ -65,6 +65,12 @@ layer is httptest against a generated fake; storage is tested directly.
   always matches a later check. Callers never construct keys.
 - **`super_user` is a wildcard**: a user holding `<user_id>:super_user` passes
   every check. Grant/revoke themselves require the actor to hold `super_user`.
+- **Roles (B1)**: `roles` + `role_permissions` + `user_roles` give named groups
+  of permissions. A role holds **bare** permissions (no `<user_id>:` prefix,
+  since a role is shared across users). `CheckPermission` falls back to roles
+  when the direct checks miss, including the bare `super_user` role wildcard.
+  `GET /api/v1/users/permissions` lists a user's effective permissions (direct
+  + role-derived); see `src/app/permission/README.md` for the full model.
 
 ### Typed operation results
 
