@@ -348,8 +348,19 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
-	// Reset the counter and lock on success. The commit happens once, after
-	// the refresh token is persisted, so the whole success path is atomic.
+	// Reject deactivated accounts: a leaver's credentials may still be valid,
+	// but the account must not be usable.
+	if !user.IsActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Str("username", input.Username).
+			Msg("Login rejected: account deactivated")
+		resp.Message = "Account is deactivated"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	// Reset the counter and lock on success, then commit.
 	if err := db.ResetLoginState(ctx, user.Id); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to reset login state")
 		resp.Message = "Failed to login"

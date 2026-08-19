@@ -1,4 +1,4 @@
-.PHONY: help build build-linux clean test test-verbose run worker install-deps generate swagger lint migrate-up migrate-down migrate-status migrate-create
+.PHONY: help build build-linux clean test test-verbose run worker install-deps generate swagger lint migrate-up migrate-down migrate-status migrate-create superuser
 
 # Variables
 APP_NAME=ars-kit
@@ -67,6 +67,9 @@ run: ## Run the HTTP server (worker runs separately: make worker)
 
 worker: ## Run the workflow engine workers
 	$(GOCMD) run $(MAIN_PATH) worker
+
+superuser: ## Bootstrap the first super user (SUPERUSER_USERNAME, SUPERUSER_EMAIL, SUPERUSER_FULL_NAME, SUPERUSER_PASSWORD)
+	$(GOCMD) run $(MAIN_PATH) superuser
 
 clean: ## Clean build artifacts
 	$(GOCLEAN)

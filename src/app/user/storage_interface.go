@@ -93,6 +93,16 @@ type StorageTx interface {
 	// revoked (cleanup when token_version is bumped).
 	RevokeAllUserRefreshTokens(ctx context.Context, userID int) error
 
+	// CountUsers returns the total number of users.
+	CountUsers(ctx context.Context) (int, error)
+
+	// ListUsers returns one page of users, ordered by id ascending.
+	ListUsers(ctx context.Context, page, pageSize int) ([]User, error)
+
+	// SetUserActive flips a user's is_active flag and returns the updated row.
+	// ErrTypeNotFound is returned when no user has the given id.
+	SetUserActive(ctx context.Context, id int, isActive bool) (User, StorageErrorType, error)
+
 	// Commit commits the transaction
 	Commit() error
 
