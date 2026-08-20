@@ -216,6 +216,22 @@ func (s *service) SetUserActive(ctx context.Context, input *SetUserActiveInput) 
 	}
 	defer db.Rollback()
 
+	// Lock the target before changing account state. Deactivation is a security
+	// event, so the lock also gives us a stable old value for the audit entry.
+	lockedUser, errType, err := db.LockUserById(ctx, input.UserId)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Int("id", input.UserId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update account"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	data, errType, err := db.SetUserActive(ctx, input.UserId, input.IsActive)
 	if err != nil {
 		if errType == ErrTypeNotFound {
@@ -228,6 +244,42 @@ func (s *service) SetUserActive(ctx context.Context, input *SetUserActiveInput) 
 		resp.Message = "Failed to update account"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
+	}
+
+	stateChanged := lockedUser.IsActive != input.IsActive
+	if stateChanged && !input.IsActive {
+		// Invalidate both access tokens and refresh-based sessions. Checking
+		// is_active only at login is insufficient because a refresh token can
+		// otherwise keep an inactive account alive indefinitely.
+		if err := db.BumpUserTokenVersion(ctx, input.UserId); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke account sessions")
+			resp.Message = "Failed to update account"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
+		if err := db.RevokeAllUserRefreshTokens(ctx, input.UserId); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke account refresh tokens")
+			resp.Message = "Failed to update account"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
+	}
+
+	if stateChanged {
+		if _, err := db.InsertAuditLog(ctx, AuditEntry{
+			Event:        AuditEventAccount,
+			ActorId:      intPtr(input.ActorId),
+			TargetUserId: intPtr(input.UserId),
+			Metadata: map[string]any{
+				"old_is_active": lockedUser.IsActive,
+				"new_is_active": input.IsActive,
+			},
+		}); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert audit log")
+			resp.Message = "Failed to update account"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
 	}
 
 	if err := db.Commit(); err != nil {

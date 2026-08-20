@@ -186,6 +186,27 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 		return resp
 	}
 
+	// Grant default self-service permissions after commit. The permission
+	// domain owns its own storage, so an in-transaction grant is not possible
+	// with the current architecture. A grant failure is rare but leaves the
+	// user without self-service perms; surface the error so operators can
+	// investigate rather than silently creating a dead-end.
+	if s.permissionService != nil {
+		for _, perm := range []string{PermissionUpdateProfile, PermissionUpdatePassword} {
+			grantOut := s.permissionService.GrantPermission(ctx, &permission.GrantPermissionInput{
+				TraceId:    input.TraceId,
+				UserID:     insertedId,
+				Permission: perm,
+			})
+			if !grantOut.Success {
+				log.Warn().Str("traceId", input.TraceId).Str("permission", perm).Msg("failed to grant default permission")
+				resp.Message = grantOut.Message
+				resp.ErrorCode = ErrorCodeInternal
+				return resp
+			}
+		}
+	}
+
 	log.Info().
 		Str("traceId", input.TraceId).
 		Str("username", input.Username).
@@ -535,6 +556,19 @@ func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutp
 		return resp
 	}
 
+	// Deactivation must invalidate refresh-based sessions as well as future
+	// password logins. Otherwise an inactive user can keep rotating a valid
+	// refresh token indefinitely.
+	if !user.IsActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", rt.UserId).
+			Msg("Refresh rejected: account deactivated")
+		resp.Message = "Invalid or expired refresh token"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
 	currentVersion, err := db.GetUserTokenVersion(ctx, rt.UserId)
 	if err != nil {
 		log.Err(err).
@@ -764,7 +798,7 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 		TargetUserId: intPtr(input.Id),
 		Metadata: map[string]any{
 			"old_username": lockedUser.Username,
-			"new_username": input.NewUsername,
+			"new_username": newUsername,
 		},
 	})
 	if err != nil {
@@ -925,7 +959,7 @@ func (s *service) UpdateEmail(ctx context.Context, input *UpdateEmailInput) *Upd
 	defer db.Rollback()
 
 	// Lock user row for update (pessimistic lock)
-	_, errType, err := db.LockUserById(ctx, input.Id)
+	lockedUser, errType, err := db.LockUserById(ctx, input.Id)
 	if err != nil {
 		if errType == ErrTypeNotFound {
 			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
@@ -948,6 +982,25 @@ func (s *service) UpdateEmail(ctx context.Context, input *UpdateEmailInput) *Upd
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update email")
+		resp.Message = "Failed to update email"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Keep the email change and its audit trail atomic. The old value comes
+	// from the row lock acquired above, so the audit entry describes exactly
+	// what was changed.
+	_, err = db.InsertAuditLog(ctx, AuditEntry{
+		Event:        AuditEventEmail,
+		ActorId:      intPtr(input.Id),
+		TargetUserId: intPtr(input.Id),
+		Metadata: map[string]any{
+			"old_email": lockedUser.Email,
+			"new_email": newEmail,
+		},
+	})
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert audit log")
 		resp.Message = "Failed to update email"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp

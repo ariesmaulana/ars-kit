@@ -31,16 +31,19 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.UserID == 0 {
-		log.Warn().Msg("User ID empty")
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -48,6 +51,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to check permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -56,6 +60,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission")
 		resp.Message = "Failed to check permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -66,6 +71,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check super user permission")
 			resp.Message = "Failed to check permission"
+			resp.ErrorCode = ErrorCodeInternal
 			return resp
 		}
 	}
@@ -78,6 +84,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role permission")
 			resp.Message = "Failed to check permission"
+			resp.ErrorCode = ErrorCodeInternal
 			return resp
 		}
 	}
@@ -93,16 +100,19 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.UserID == 0 {
-		log.Warn().Msg("User ID empty")
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -110,6 +120,7 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to grant permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -118,6 +129,7 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to grant permission")
 		resp.Message = "Failed to grant permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -125,6 +137,7 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to grant permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -138,16 +151,19 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.UserID == 0 {
-		log.Warn().Msg("User ID empty")
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -155,6 +171,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to revoke permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -163,6 +180,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to revoke permission")
 		resp.Message = "Failed to revoke permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -170,6 +188,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to revoke permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -183,11 +202,13 @@ func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *Creat
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if strings.TrimSpace(input.Name) == "" {
 		log.Warn().Msg("Role name empty")
 		resp.Message = "Role name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -195,6 +216,7 @@ func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *Creat
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to create role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -204,10 +226,12 @@ func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *Creat
 		if errors.Is(err, ErrRoleNameTaken) {
 			log.Warn().Str("traceId", input.TraceId).Str("name", input.Name).Msg("role name already exists")
 			resp.Message = "Role already exists"
+			resp.ErrorCode = ErrorCodeConflict
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to create role")
 		resp.Message = "Failed to create role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -215,6 +239,7 @@ func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *Creat
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Int("roleId", id).Msg("failed to load created role")
 		resp.Message = "Failed to create role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -222,6 +247,7 @@ func (s *service) CreateRole(ctx context.Context, input *CreateRoleInput) *Creat
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to create role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -236,16 +262,19 @@ func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissio
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.RoleId == 0 {
-		log.Warn().Msg("Role ID empty")
+	if input.RoleId <= 0 {
+		log.Warn().Msg("Role ID invalid")
 		resp.Message = "Role ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -253,6 +282,7 @@ func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissio
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to add role permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -261,10 +291,12 @@ func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissio
 		if errors.Is(err, ErrRoleNotFound) {
 			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
 			resp.Message = "Role not found"
+			resp.ErrorCode = ErrorCodeNotFound
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
 		resp.Message = "Failed to add role permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -272,6 +304,7 @@ func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissio
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to add role permission")
 		resp.Message = "Failed to add role permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -279,6 +312,7 @@ func (s *service) AddRolePermission(ctx context.Context, input *AddRolePermissio
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to add role permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -292,16 +326,19 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.UserID == 0 {
-		log.Warn().Msg("User ID empty")
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.RoleId == 0 {
-		log.Warn().Msg("Role ID empty")
+	if input.RoleId <= 0 {
+		log.Warn().Msg("Role ID invalid")
 		resp.Message = "Role ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -309,6 +346,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -317,10 +355,12 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 		if errors.Is(err, ErrRoleNotFound) {
 			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
 			resp.Message = "Role not found"
+			resp.ErrorCode = ErrorCodeNotFound
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -328,6 +368,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to assign role")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -335,6 +376,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -348,11 +390,13 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.UserID == 0 {
-		log.Warn().Msg("User ID empty")
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -360,6 +404,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to list permissions"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -368,6 +413,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list direct permissions")
 		resp.Message = "Failed to list permissions"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -375,6 +421,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list user roles")
 		resp.Message = "Failed to list permissions"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -384,6 +431,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Int("roleId", role.Id).Msg("failed to list role permissions")
 			resp.Message = "Failed to list permissions"
+			resp.ErrorCode = ErrorCodeInternal
 			return resp
 		}
 		rolePermissions = append(rolePermissions, RolePermissions{
@@ -396,6 +444,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to list effective permissions")
 		resp.Message = "Failed to list permissions"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -403,6 +452,7 @@ func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermis
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to list permissions"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 

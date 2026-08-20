@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ariesmaulana/ars-kit/database"
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	permissionfakes "github.com/ariesmaulana/ars-kit/src/app/permission/fakes"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
@@ -57,6 +58,10 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
 	permissionService := &permissionfakes.ServiceFake{}
+	// The mocked permission module grants by default so registration, login,
+	// and bootstrap are not blocked. Tests that need a specific outcome set
+	// their own stub/return on the fake.
+	permissionService.GrantPermissionReturns(&permission.GrantPermissionOutput{Success: true})
 	jwtService := user.NewJWTService(user.JWTConfig{
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,

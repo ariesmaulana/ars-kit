@@ -8,6 +8,17 @@ import "context"
 // the bare "super_user" when granted through a role.
 const PermissionSuperUser = "super_user"
 
+// ErrorCode categorizes permission-service failures so callers do not need to
+// parse human-readable messages.
+type ErrorCode string
+
+const (
+	ErrorCodeValidation ErrorCode = "validation"
+	ErrorCodeConflict   ErrorCode = "conflict"
+	ErrorCodeNotFound   ErrorCode = "not_found"
+	ErrorCodeInternal   ErrorCode = "internal"
+)
+
 type Service interface {
 	CheckPermission(ctx context.Context, input *CheckPermissionInput) *CheckPermissionOutput
 	GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput
@@ -42,6 +53,7 @@ type CheckPermissionOutput struct {
 	Success       bool
 	Message       string
 	TraceId       string
+	ErrorCode     ErrorCode
 	HasPermission bool
 }
 
@@ -52,9 +64,10 @@ type GrantPermissionInput struct {
 }
 
 type GrantPermissionOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 type RevokePermissionInput struct {
@@ -64,9 +77,10 @@ type RevokePermissionInput struct {
 }
 
 type RevokePermissionOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 type CreateRoleInput struct {
@@ -76,10 +90,11 @@ type CreateRoleInput struct {
 }
 
 type CreateRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
-	Role    Role
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Role      Role
 }
 
 type AddRolePermissionInput struct {
@@ -89,9 +104,10 @@ type AddRolePermissionInput struct {
 }
 
 type AddRolePermissionOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 type AssignRoleInput struct {
@@ -101,9 +117,10 @@ type AssignRoleInput struct {
 }
 
 type AssignRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 type ListUserPermissionsInput struct {
@@ -121,6 +138,7 @@ type ListUserPermissionsOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string
+	ErrorCode ErrorCode
 	Direct    []string
 	Roles     []RolePermissions
 	Effective []string

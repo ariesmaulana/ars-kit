@@ -18,6 +18,8 @@ const (
 	AuditEventEmail = "email"
 	// AuditEventLogin records a successful login.
 	AuditEventLogin = "login"
+	// AuditEventAccount records an account activation or deactivation.
+	AuditEventAccount = "account"
 )
 
 // AuditEntry is one persisted audit log row: who did what to whom, when.

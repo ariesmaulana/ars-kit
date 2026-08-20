@@ -2,31 +2,36 @@
 
 ## Overview
 
-Database migrations are managed with [golang-migrate](https://github.com/golang-migrate/migrate). Migration files live in `database/migrations/` and are applied in order — both in production (via `make migrate-up`) and in tests (automatically, per isolated schema).
-
-There are **no down migrations**. If you need to revert a change, create a new forward migration that undoes it. This keeps history linear and auditable.
+Database migrations are managed with [Goose](https://github.com/pressly/goose) and embedded into the binary via `database/migrator.go`. Each domain owns its SQL files under `src/app/<domain>/sql/`, applied in order both in production (`make migrate-up`) and in tests (automatically, per isolated schema).
 
 ---
 
 ## File Naming Convention
 
-Each migration is a single SQL file using a **Unix timestamp prefix**:
+Each migration uses a **Goose timestamp prefix** and the standard Goose markers:
 
 ```
-database/migrations/
-  20260318120000_initial_schema.up.sql
-  20260318143022_add_avatar_url_to_users.up.sql
-  20260318150811_drop_avatar_url_from_users.up.sql   ← revert by going forward
+src/app/<domain>/
+  sql/
+    20260318120000_initial_schema.sql
+    20260318143022_add_avatar_url_to_users.sql
+```
+
+Inside each file:
+
+```sql
+-- +goose Up
+ALTER TABLE users ADD COLUMN avatar_url TEXT;
+
+-- +goose Down
+ALTER TABLE users DROP COLUMN avatar_url;
 ```
 
 Rules:
-- Version prefix is a Unix timestamp (`YYYYMMDDHHmmss`) — generated automatically by `make migrate-create`
+- Version prefix is a timestamp (`YYYYMMDDHHmmss`) — `make migrate-create` generates it
 - Name must be `snake_case`
-- Files are applied in ascending version order (oldest timestamp first)
-
-**Why timestamps instead of sequential numbers?**
-
-Sequential numbers (`0001`, `0002`, …) cause conflicts when two developers create migrations on separate branches at the same time — both get the same number. Timestamps are unique per second, making conflicts practically impossible without any coordination needed.
+- Each file must contain both `-- +goose Up` and `-- +goose Down` markers
+- Down sections are currently left empty; create forward-only undo migrations instead when possible
 
 ---
 
@@ -36,14 +41,7 @@ Sequential numbers (`0001`, `0002`, …) cause conflicts when two developers cre
 make migrate-create NAME=your_description
 ```
 
-Example:
-
-```bash
-make migrate-create NAME=add_avatar_url_to_users
-# Created: database/migrations/0002_add_avatar_url_to_users.up.sql
-```
-
-Then edit the generated file with your SQL.
+Place the generated file under the relevant domain's `sql/` directory (e.g. `src/app/user/sql/`).
 
 ---
 
@@ -65,60 +63,41 @@ make migrate-status
 
 ## How It Works in Production
 
-`cmd/migrate/main.go` reads the same `.env` / environment variables as the app and connects to the production database. It targets the `public` schema.
+`database/migrator.go` embeds every `sql/*.sql` file under `src/app/*/sql/` at compile time. At startup `migrate-up` (or the `migrate-up` Make target) runs Goose against the `public` schema.
 
 ```
-database/migrations/*.up.sql  →  make migrate-up  →  production DB (public schema)
+src/app/<domain>/sql/*.sql  →  database/migrator.go (embed)  →  Goose  →  production DB (public schema)
 ```
 
-The `schema_migrations` table is created automatically to track which migrations have been applied.
+Each domain keeps its own Goose version table (`goose_db_version_<domain>`) so migrations are tracked independently and can be added without conflicts between domains.
 
 ---
 
 ## How It Works in Tests
 
-The test suite (`testing/suite.go`) runs migrations automatically for every test scenario:
+The test suite (`testing/suite.go`) runs Goose migrations automatically for every test scenario:
 
 1. A random schema is created: `test_<16 hex chars>`
-2. golang-migrate runs all `.up.sql` files into that schema (`search_path=<schema>`)
-3. A `schema_migrations` table is created inside that isolated schema
+2. Goose applies all embedded migrations into that schema
+3. Per-domain `goose_db_version_*` tables are created inside the isolated schema
 4. After the test, the schema is dropped entirely
 
 **Tests always use the latest schema automatically** — no manual steps needed when you add a new migration.
-
-```
-database/migrations/*.up.sql  →  suite.Runs()  →  isolated test schema (per test)
-```
 
 ---
 
 ## Dirty State Recovery
 
-If a migration fails partway through, the database is marked **dirty** and future migrations are blocked.
+If a migration fails partway through, Goose marks the version **dirty** and future migrations are blocked.
 
 To check:
 ```bash
 make migrate-status
-# Output: Dirty: true
 ```
 
 To fix:
 1. Manually inspect and repair the partial change in the database
 2. Force the version back to the last clean state:
    ```bash
-   go run ./cmd/migrate force <version>
+   goose -dir src/app/<domain>/sql postgres $DATABASE_URL force <version>
    ```
-   Example: `go run ./cmd/migrate force 1`
-
----
-
-## Schema Migrations Table
-
-golang-migrate creates a `schema_migrations` table with two columns:
-
-| Column    | Type    | Description                        |
-|-----------|---------|------------------------------------|
-| `version` | bigint  | Migration version number           |
-| `dirty`   | boolean | `true` if migration failed midway  |
-
-Do not modify this table manually unless recovering from a dirty state.

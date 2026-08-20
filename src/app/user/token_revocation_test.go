@@ -196,3 +196,49 @@ func TestTokenRevocation_UpdatePasswordInvalidatesSessions(t *testing.T) {
 		})
 	})
 }
+
+func TestTokenRevocation_DeactivatedUserCannotRefresh(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Deactivated user cannot refresh", func() {
+			var target user.User
+			var admin *user.User
+			var refresh string
+
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				app.Helper.InsertUserWithHashedPassword(ctx, t, "deactivateuser", "deactivate@example.com", "Deactivate User", "password123")
+				admin = app.Helper.InsertUserWithHashedPassword(ctx, t, "deactivateadmin", "deactivateadmin@example.com", "Deactivate Admin", "password123")
+			})
+
+			suite.Run(t, "deactivation invalidates existing refresh tokens", func(t *testing.T, ctx context.Context, app *UserApp) {
+				target, _, refresh = loginUser(t, app, "deactivateuser", "password123")
+				require.Equal(t, 1, app.Helper.CountActiveRefreshTokens(ctx, t, target.Id))
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					return createGrantedPermissionCheck()
+				}
+
+				out := app.Service.SetUserActive(ctx, &user.SetUserActiveInput{
+					TraceId:  "trace-deactivate",
+					ActorId:  admin.Id,
+					UserId:   target.Id,
+					IsActive: false,
+				})
+				require.True(t, out.Success, out.Message)
+
+				refreshOut := refreshToken(t, app, refresh)
+				assert.False(t, refreshOut.Success, "deactivated user must not refresh")
+				assert.Equal(t, user.ErrorCodeUnauthorized, refreshOut.ErrorCode)
+				assert.Equal(t, 0, app.Helper.CountActiveRefreshTokens(ctx, t, target.Id))
+
+				out = app.Service.SetUserActive(ctx, &user.SetUserActiveInput{
+					TraceId:  "trace-reactivate",
+					ActorId:  admin.Id,
+					UserId:   target.Id,
+					IsActive: true,
+				})
+				require.True(t, out.Success, out.Message)
+				assert.False(t, refreshToken(t, app, refresh).Success, "old token stays revoked after reactivation")
+			})
+		})
+	})
+}
