@@ -29,6 +29,7 @@ type StorageTx interface {
 	// Roles + role->permission mapping.
 	CreateRole(ctx context.Context, name, description string) (int, error)
 	GetRoleById(ctx context.Context, roleID int) (*Role, error)
+	DeleteRole(ctx context.Context, roleID int) error
 	AddRolePermission(ctx context.Context, roleID int, permission string) error
 	RemoveRolePermission(ctx context.Context, roleID int, permission string) error
 

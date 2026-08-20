@@ -1312,3 +1312,405 @@ func TestUserListUserPermissions(t *testing.T) {
 		})
 	})
 }
+
+func TestUserRemoveRolePermission(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User RemoveRolePermission", func() {
+
+			var RoleID int
+
+			type input struct {
+				traceId    string
+				roleID     int
+				permission string
+			}
+			type expected struct {
+				success        bool
+				message        string
+				permsRemaining int
+			}
+			type testRow struct {
+				name     string
+				input    *input
+				expected *expected
+			}
+
+			suite.Setup(func(ctx context.Context, app *PermissionApp) {
+				RoleID = app.Helper.InsertRole(ctx, t, "editor", "")
+				app.Helper.AddRolePermissionToRole(ctx, t, RoleID, "user:profile_update")
+				app.Helper.AddRolePermissionToRole(ctx, t, RoleID, "user:password_update")
+			})
+
+			runtest := func(t *testing.T, app *PermissionApp, r *testRow) {
+				ctx := context.Background()
+
+				initialPerms := app.Helper.GetRolePermissions(ctx, t, r.input.roleID)
+
+				output := app.Service.RemoveRolePermission(ctx, &permission.RemoveRolePermissionInput{
+					TraceId:    r.input.traceId,
+					RoleId:     r.input.roleID,
+					Permission: r.input.permission,
+				})
+
+				afterPerms := app.Helper.GetRolePermissions(ctx, t, r.input.roleID)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+
+				if !r.expected.success {
+					assert.Equal(t, initialPerms, afterPerms, r.name)
+					return
+				}
+
+				assert.Equal(t, r.expected.permsRemaining, len(afterPerms), r.name)
+				assert.NotContains(t, afterPerms, r.input.permission, r.name)
+			}
+
+			runRows := func(t *testing.T, app *PermissionApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			suite.Run(t, "RemoveRolePermission scenarios", func(t *testing.T, ctx context.Context, app *PermissionApp) {
+				runRows(t, app, []*testRow{
+					{
+						name: "Should remove a permission from a role",
+						input: &input{
+							traceId:    "trace-test",
+							roleID:     RoleID,
+							permission: "user:profile_update",
+						},
+						expected: &expected{
+							success:        true,
+							message:        "Role permission removed successfully",
+							permsRemaining: 1,
+						},
+					},
+					{
+						name: "Should succeed removing a non-existent permission",
+						input: &input{
+							traceId:    "trace-test",
+							roleID:     RoleID,
+							permission: "nonexistent:perm",
+						},
+						expected: &expected{
+							success:        true,
+							message:        "Role permission removed successfully",
+							permsRemaining: 1,
+						},
+					},
+					{
+						name: "Should fail when role does not exist",
+						input: &input{
+							traceId:    "trace-test",
+							roleID:     99999,
+							permission: "user:profile_update",
+						},
+						expected: &expected{
+							success: false,
+							message: "Role not found",
+						},
+					},
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId:    "",
+							roleID:     RoleID,
+							permission: "user:profile_update",
+						},
+						expected: &expected{
+							success: false,
+							message: "TraceId is mandatory",
+						},
+					},
+					{
+						name: "Should fail when RoleID is empty",
+						input: &input{
+							traceId:    "trace-test",
+							roleID:     0,
+							permission: "user:profile_update",
+						},
+						expected: &expected{
+							success: false,
+							message: "Role ID is mandatory",
+						},
+					},
+					{
+						name: "Should fail when Permission is empty",
+						input: &input{
+							traceId:    "trace-test",
+							roleID:     RoleID,
+							permission: "",
+						},
+						expected: &expected{
+							success: false,
+							message: "Permission is mandatory",
+						},
+					},
+				})
+			})
+		})
+	})
+}
+
+func TestUserUnassignRole(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User UnassignRole", func() {
+
+			var Users []DataUser
+			var RoleID int
+
+			type input struct {
+				traceId string
+				userID  int
+				roleID  int
+			}
+			type expected struct {
+				success bool
+				message string
+			}
+			type testRow struct {
+				name     string
+				input    *input
+				expected *expected
+			}
+
+			suite.Setup(func(ctx context.Context, app *PermissionApp) {
+				Users = []DataUser{
+					{Idx: 0, ID: 100},
+					{Idx: 1, ID: 200},
+				}
+				RoleID = app.Helper.InsertRole(ctx, t, "editor", "")
+				app.Helper.AssignRoleToUser(ctx, t, Users[0].ID, RoleID)
+			})
+
+			runtest := func(t *testing.T, app *PermissionApp, r *testRow) {
+				ctx := context.Background()
+
+				initialRoles := app.Helper.GetUserRoles(ctx, t, r.input.userID)
+
+				output := app.Service.UnassignRole(ctx, &permission.UnassignRoleInput{
+					TraceId: r.input.traceId,
+					UserID:  r.input.userID,
+					RoleId:  r.input.roleID,
+				})
+
+				afterRoles := app.Helper.GetUserRoles(ctx, t, r.input.userID)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+
+				if !r.expected.success {
+					assert.Equal(t, initialRoles, afterRoles, r.name)
+					return
+				}
+
+				stillAssigned := false
+				for _, role := range afterRoles {
+					if role.Id == RoleID {
+						stillAssigned = true
+						break
+					}
+				}
+				assert.False(t, stillAssigned, r.name+" - role should no longer be assigned")
+			}
+
+			runRows := func(t *testing.T, app *PermissionApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			suite.Run(t, "UnassignRole scenarios", func(t *testing.T, ctx context.Context, app *PermissionApp) {
+				runRows(t, app, []*testRow{
+					{
+						name: "Should unassign a role from a user",
+						input: &input{
+							traceId: "trace-test",
+							userID:  Users[0].ID,
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: true,
+							message: "Role unassigned successfully",
+						},
+					},
+					{
+						name: "Should succeed unassigning a never-assigned role",
+						input: &input{
+							traceId: "trace-test",
+							userID:  Users[1].ID,
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: true,
+							message: "Role unassigned successfully",
+						},
+					},
+					{
+						name: "Should fail when role does not exist",
+						input: &input{
+							traceId: "trace-test",
+							userID:  Users[0].ID,
+							roleID:  99999,
+						},
+						expected: &expected{
+							success: false,
+							message: "Role not found",
+						},
+					},
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId: "",
+							userID:  Users[0].ID,
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: false,
+							message: "TraceId is mandatory",
+						},
+					},
+					{
+						name: "Should fail when UserID is empty",
+						input: &input{
+							traceId: "trace-test",
+							userID:  0,
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: false,
+							message: "User ID is mandatory",
+						},
+					},
+					{
+						name: "Should fail when RoleID is empty",
+						input: &input{
+							traceId: "trace-test",
+							userID:  Users[0].ID,
+							roleID:  0,
+						},
+						expected: &expected{
+							success: false,
+							message: "Role ID is mandatory",
+						},
+					},
+				})
+			})
+		})
+	})
+}
+
+func TestUserDeleteRole(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User DeleteRole", func() {
+
+			var RoleID int
+			var UserID int
+
+			type input struct {
+				traceId string
+				roleID  int
+			}
+			type expected struct {
+				success bool
+				message string
+			}
+			type testRow struct {
+				name     string
+				input    *input
+				expected *expected
+			}
+
+			suite.Setup(func(ctx context.Context, app *PermissionApp) {
+				UserID = 100
+				RoleID = app.Helper.InsertRole(ctx, t, "editor", "")
+				app.Helper.AddRolePermissionToRole(ctx, t, RoleID, "user:profile_update")
+				app.Helper.AssignRoleToUser(ctx, t, UserID, RoleID)
+			})
+
+			runtest := func(t *testing.T, app *PermissionApp, r *testRow) {
+				ctx := context.Background()
+
+				initialRoles := app.Helper.GetAllRoles(ctx, t)
+
+				output := app.Service.DeleteRole(ctx, &permission.DeleteRoleInput{
+					TraceId: r.input.traceId,
+					RoleId:  r.input.roleID,
+				})
+
+				afterRoles := app.Helper.GetAllRoles(ctx, t)
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+
+				if !r.expected.success {
+					assert.Equal(t, initialRoles, afterRoles, r.name)
+					return
+				}
+
+				_, stillExists := afterRoles[r.input.roleID]
+				assert.False(t, stillExists, r.name+" - role should be gone")
+				// ON DELETE CASCADE must drop the dependent rows too.
+				assert.Empty(t, app.Helper.GetRolePermissions(ctx, t, r.input.roleID), r.name+" - role_permissions cascade")
+				assert.Empty(t, app.Helper.GetUserRoles(ctx, t, UserID), r.name+" - user_roles cascade")
+			}
+
+			runRows := func(t *testing.T, app *PermissionApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			suite.Run(t, "DeleteRole scenarios", func(t *testing.T, ctx context.Context, app *PermissionApp) {
+				runRows(t, app, []*testRow{
+					{
+						name: "Should delete a role and cascade its mappings",
+						input: &input{
+							traceId: "trace-test",
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: true,
+							message: "Role deleted successfully",
+						},
+					},
+					{
+						name: "Should fail when role does not exist",
+						input: &input{
+							traceId: "trace-test",
+							roleID:  99999,
+						},
+						expected: &expected{
+							success: false,
+							message: "Role not found",
+						},
+					},
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId: "",
+							roleID:  RoleID,
+						},
+						expected: &expected{
+							success: false,
+							message: "TraceId is mandatory",
+						},
+					},
+					{
+						name: "Should fail when RoleID is empty",
+						input: &input{
+							traceId: "trace-test",
+							roleID:  0,
+						},
+						expected: &expected{
+							success: false,
+							message: "Role ID is mandatory",
+						},
+					},
+				})
+			})
+		})
+	})
+}

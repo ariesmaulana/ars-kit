@@ -105,6 +105,17 @@ func (st *storageTx) GetRoleById(ctx context.Context, roleID int) (*Role, error)
 	return &r, nil
 }
 
+func (st *storageTx) DeleteRole(ctx context.Context, roleID int) error {
+	tag, err := st.tx.Exec(ctx, `DELETE FROM roles WHERE id = $1`, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to delete role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRoleNotFound
+	}
+	return nil
+}
+
 func (st *storageTx) AddRolePermission(ctx context.Context, roleID int, permission string) error {
 	_, err := st.tx.Exec(ctx,
 		`INSERT INTO role_permissions (role_id, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING`,

@@ -33,9 +33,19 @@ type Service interface {
 	// CheckPermission and listings.
 	AddRolePermission(ctx context.Context, input *AddRolePermissionInput) *AddRolePermissionOutput
 
+	// RemoveRolePermission removes a bare permission from a role.
+	RemoveRolePermission(ctx context.Context, input *RemoveRolePermissionInput) *RemoveRolePermissionOutput
+
 	// AssignRole assigns a role to a user. The user inherits every permission
 	// the role holds for CheckPermission and listings.
 	AssignRole(ctx context.Context, input *AssignRoleInput) *AssignRoleOutput
+
+	// UnassignRole removes a role assignment from a user.
+	UnassignRole(ctx context.Context, input *UnassignRoleInput) *UnassignRoleOutput
+
+	// DeleteRole deletes a role and, via ON DELETE CASCADE, every
+	// role_permissions and user_roles row that references it.
+	DeleteRole(ctx context.Context, input *DeleteRoleInput) *DeleteRoleOutput
 
 	// ListUserPermissions lists a user's effective permissions: their direct
 	// grants plus everything their roles grant, with the roles broken out
@@ -110,6 +120,19 @@ type AddRolePermissionOutput struct {
 	ErrorCode ErrorCode
 }
 
+type RemoveRolePermissionInput struct {
+	TraceId    string
+	RoleId     int
+	Permission string
+}
+
+type RemoveRolePermissionOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
 type AssignRoleInput struct {
 	TraceId string
 	UserID  int
@@ -117,6 +140,31 @@ type AssignRoleInput struct {
 }
 
 type AssignRoleOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+type UnassignRoleInput struct {
+	TraceId string
+	UserID  int
+	RoleId  int
+}
+
+type UnassignRoleOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+type DeleteRoleInput struct {
+	TraceId string
+	RoleId  int
+}
+
+type DeleteRoleOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string

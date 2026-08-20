@@ -385,6 +385,185 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	return resp
 }
 
+func (s *service) RemoveRolePermission(ctx context.Context, input *RemoveRolePermissionInput) *RemoveRolePermissionOutput {
+	resp := &RemoveRolePermissionOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.RoleId <= 0 {
+		log.Warn().Msg("Role ID invalid")
+		resp.Message = "Role ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Permission == "" {
+		log.Warn().Msg("Permission empty")
+		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to remove role permission"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	if _, err := db.GetRoleById(ctx, input.RoleId); err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
+			resp.Message = "Role not found"
+			resp.ErrorCode = ErrorCodeNotFound
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
+		resp.Message = "Failed to remove role permission"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	err = db.RemoveRolePermission(ctx, input.RoleId, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to remove role permission")
+		resp.Message = "Failed to remove role permission"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to remove role permission"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role permission removed successfully"
+	return resp
+}
+
+func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *UnassignRoleOutput {
+	resp := &UnassignRoleOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.UserID <= 0 {
+		log.Warn().Msg("User ID invalid")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.RoleId <= 0 {
+		log.Warn().Msg("Role ID invalid")
+		resp.Message = "Role ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	if _, err := db.GetRoleById(ctx, input.RoleId); err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
+			resp.Message = "Role not found"
+			resp.ErrorCode = ErrorCodeNotFound
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to load role")
+		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	err = db.UnassignRole(ctx, input.UserID, input.RoleId)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to unassign role")
+		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role unassigned successfully"
+	return resp
+}
+
+func (s *service) DeleteRole(ctx context.Context, input *DeleteRoleInput) *DeleteRoleOutput {
+	resp := &DeleteRoleOutput{TraceId: input.TraceId}
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.RoleId <= 0 {
+		log.Warn().Msg("Role ID invalid")
+		resp.Message = "Role ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
+		resp.Message = "Failed to delete role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	err = db.DeleteRole(ctx, input.RoleId)
+	if err != nil {
+		if errors.Is(err, ErrRoleNotFound) {
+			log.Warn().Str("traceId", input.TraceId).Int("roleId", input.RoleId).Msg("role not found")
+			resp.Message = "Role not found"
+			resp.ErrorCode = ErrorCodeNotFound
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to delete role")
+		resp.Message = "Failed to delete role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	err = db.Commit()
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+		resp.Message = "Failed to delete role"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Role deleted successfully"
+	return resp
+}
+
 func (s *service) ListUserPermissions(ctx context.Context, input *ListUserPermissionsInput) *ListUserPermissionsOutput {
 	resp := &ListUserPermissionsOutput{TraceId: input.TraceId}
 	if input.TraceId == "" {
