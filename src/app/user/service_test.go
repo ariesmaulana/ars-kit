@@ -320,6 +320,7 @@ func TestUserLogin(t *testing.T) {
 						Email:    "test1@example.com",
 						FullName: "Test User 1",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 					{
 						Idx:      1,
@@ -327,12 +328,21 @@ func TestUserLogin(t *testing.T) {
 						Email:    "test2@example.com",
 						FullName: "Test User 2",
 						Password: "password123",
+						Status:   user.UserStatusActive,
+					},
+					{
+						Idx:      2,
+						Username: "disableduser",
+						Email:    "disabled@example.com",
+						FullName: "Disabled User",
+						Password: "password123",
+						Status:   user.UserStatusDisabled,
 					},
 				}
 
 				// Insert users and store actual database IDs
 				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
 					Users[i].Id = insertedUser.Id // Store actual database ID
 				}
 			})
@@ -348,7 +358,6 @@ func TestUserLogin(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
-
 			}
 
 			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
@@ -449,6 +458,17 @@ func TestUserLogin(t *testing.T) {
 						expected: &expected{
 							success: false,
 							message: "Invalid username or password",
+						},
+					},
+					{
+						name: "Should fail when account is disabled",
+						input: &input{
+							username: "disableduser",
+							password: "password123",
+						},
+						expected: &expected{
+							success: false,
+							message: "Account disabled",
 						},
 					},
 				})

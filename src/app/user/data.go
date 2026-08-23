@@ -2,12 +2,20 @@ package user
 
 import "time"
 
+type UserStatus string
+
+const (
+	UserStatusActive    UserStatus = "active"
+	UserStatusDisabled  UserStatus = "disabled"
+	UserStatusSuspended UserStatus = "suspended"
+)
+
 type User struct {
-	Id        int
-	Username  string
-	Email     string
-	FullName  string
-	Status    string
+	Id       int
+	Username string
+	Email    string
+	FullName string
+	Status    UserStatus
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
