@@ -86,7 +86,7 @@ func TestUserRegister(t *testing.T) {
 							username: "testuser",
 							email:    "test@example.com",
 							fullName: "Test User",
-							password: "password123",
+							password: "password12345",
 						},
 						expected: &expected{
 							success:     true,
@@ -100,7 +100,7 @@ func TestUserRegister(t *testing.T) {
 							username: "user5",
 							email:    "user5@example.com",
 							fullName: "User Five",
-							password: "password123",
+							password: "password12345",
 						},
 						expected: &expected{
 							success:     true,
@@ -109,12 +109,12 @@ func TestUserRegister(t *testing.T) {
 						},
 					},
 					{
-						name: "Should register user with minimum password length (7 characters)",
+						name: "Should register user with minimum password length (12 characters)",
 						input: &input{
-							username: "user7char",
-							email:    "user7@example.com",
-							fullName: "User Seven",
-							password: "pass123",
+							username: "user12char",
+							email:    "user12@example.com",
+							fullName: "User Twelve",
+							password: "pass12345678",
 						},
 						expected: &expected{
 							success:     true,
@@ -128,7 +128,7 @@ func TestUserRegister(t *testing.T) {
 							username: "verylongusername12345",
 							email:    "longuser@example.com",
 							fullName: "Long Username User",
-							password: "password123",
+							password: "password12345",
 						},
 						expected: &expected{
 							success:     true,
@@ -142,7 +142,7 @@ func TestUserRegister(t *testing.T) {
 							username: "complexemail",
 							email:    "complex.email+tag@subdomain.example.com",
 							fullName: "Complex Email User",
-							password: "password123",
+							password: "password12345",
 						},
 						expected: &expected{
 							success:     true,
@@ -255,16 +255,16 @@ func TestUserRegister(t *testing.T) {
 						},
 					},
 					{
-						name: "Should fail when password is too short (6 characters)",
+						name: "Should fail when password is too short (11 characters)",
 						input: &input{
 							username: "testuser",
 							email:    "test@example.com",
 							fullName: "Test User",
-							password: "pass12",
+							password: "pass1234567",
 						},
 						expected: &expected{
 							success:     false,
-							message:     "Password must be at least 7 characters long",
+							message:     "Password must be at least 12 characters long",
 							userCreated: false,
 						},
 					},
@@ -276,7 +276,7 @@ func TestUserRegister(t *testing.T) {
 							username: "testuser",
 							email:    "test@example.com",
 							fullName: "",
-							password: "password123",
+							password: "password12345",
 						},
 						expected: &expected{
 							success:     false,
@@ -840,7 +840,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "password123",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           true,
@@ -850,11 +850,11 @@ func TestUserUpdatePassword(t *testing.T) {
 						permissionCheck: createGrantedPermissionCheck(),
 					},
 					{
-						name: "Should update password to minimum length (7 characters)",
+						name: "Should update password to minimum length (12 characters)",
 						input: &input{
 							userID:      Users[1].Id,
 							oldPassword: "password123",
-							newPassword: "pass123",
+							newPassword: "pass12345678",
 						},
 						expected: &expected{
 							success:           true,
@@ -867,7 +867,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						name: "Should update password to long password",
 						input: &input{
 							userID:      Users[0].Id,
-							oldPassword: "newpass123",
+							oldPassword: "newpassword123",
 							newPassword: "verylongpassword12345",
 						},
 						expected: &expected{
@@ -884,7 +884,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           false,
@@ -897,7 +897,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "wrongpassword",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           false,
@@ -922,15 +922,15 @@ func TestUserUpdatePassword(t *testing.T) {
 						},
 					},
 					{
-						name: "Should fail when new password is too short (6 characters)",
+						name: "Should fail when new password is too short (11 characters)",
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "verylongpassword12345",
-							newPassword: "pass12",
+							newPassword: "pass1234567",
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Password must be at least 7 characters long",
+							message:           "Password must be at least 12 characters long",
 							expectedCountMock: 0,
 						},
 					},
@@ -943,9 +943,23 @@ func TestUserUpdatePassword(t *testing.T) {
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Password must be at least 7 characters long",
+							message:           "Password must be at least 12 characters long",
 							expectedCountMock: 0,
 						},
+					},
+					{
+						name: "Should fail when new password reuses recent password",
+						input: &input{
+							userID:      Users[0].Id,
+							oldPassword: "verylongpassword12345",
+							newPassword: "verylongpassword12345",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "New password must be different from recent passwords",
+							expectedCountMock: 1,
+						},
+						permissionCheck: createGrantedPermissionCheck(),
 					},
 
 					// ===== Validation Tests: User ID =====
@@ -954,7 +968,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      99999,
 							oldPassword: "anypassword",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           false,
@@ -970,7 +984,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "password123",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           false,
@@ -984,7 +998,7 @@ func TestUserUpdatePassword(t *testing.T) {
 						input: &input{
 							userID:      Users[0].Id,
 							oldPassword: "password123",
-							newPassword: "newpass123",
+							newPassword: "newpassword123",
 						},
 						expected: &expected{
 							success:           false,
