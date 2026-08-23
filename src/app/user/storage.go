@@ -27,6 +27,51 @@ func NewStorage(pool *pgxpool.Pool) Storage {
 	}
 }
 
+func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter string) ([]User, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 10
+	}
+	offset := (page - 1) * size
+
+	countQuery := `
+		SELECT count(*) FROM users
+		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+	`
+	var total int
+	if err := st.tx.QueryRow(ctx, countQuery, filter).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	query := `
+		SELECT id, username, email, full_name, created_at, updated_at
+		FROM users
+		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+		ORDER BY id
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := st.tx.Query(ctx, query, filter, size, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]User, 0)
+	for rows.Next() {
+		u, err := convertUserRow(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user row: %w", err)
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate user rows: %w", err)
+	}
+	return users, total, nil
+}
+
 // GetUserTokenVersion reads a user's current token_version outside a
 // transaction. Used by the JWT middleware to reject tokens minted before a
 // security event (password change).
@@ -264,6 +309,15 @@ func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
 	_, err := st.tx.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to reset login state: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) DeleteUser(ctx context.Context, id int) error {
+	query := `DELETE FROM users WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
 	}
 	return nil
 }

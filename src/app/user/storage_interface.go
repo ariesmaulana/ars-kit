@@ -93,6 +93,16 @@ type StorageTx interface {
 	// revoked (cleanup when token_version is bumped).
 	RevokeAllUserRefreshTokens(ctx context.Context, userID int) error
 
+	// DeleteUser hard-deletes a user (GDPR erasure). Refresh tokens cascade
+	// via the foreign key. Callers should hold the row lock (LockUserById)
+	// first so a missing id is detected before the delete.
+	DeleteUser(ctx context.Context, id int) error
+
+	// ListUsers returns a page of users matching an optional filter (username
+	// or email substring) plus the total count for pagination. Read-only, like
+	// every other storage access it runs inside the transaction.
+	ListUsers(ctx context.Context, page, size int, filter string) ([]User, int, error)
+
 	// Commit commits the transaction
 	Commit() error
 

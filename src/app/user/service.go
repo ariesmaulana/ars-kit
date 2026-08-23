@@ -908,6 +908,188 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	return resp
 }
 
+// ListUsers lists users for an admin. The actor must hold the super_user
+// permission; without it the call is rejected before any query runs.
+func (s *service) ListUsers(ctx context.Context, input *ListUsersInput) *ListUsersOutput {
+	resp := &ListUsersOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can list users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	page, size := input.Page, input.Size
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 10
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to list users"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	users, total, err := db.ListUsers(ctx, page, size, input.Filter)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to list users")
+		resp.Message = "Failed to list users"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Users retrieved successfully"
+	resp.Users = users
+	resp.Total = total
+	resp.Page = page
+	resp.Size = size
+	return resp
+}
+
+// GetUser fetches any user by id for an admin. The actor must hold the
+// super_user permission.
+func (s *service) GetUser(ctx context.Context, input *GetUserInput) *GetUserOutput {
+	resp := &GetUserOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can view users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to fetch user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	user, err := db.GetUserById(ctx, input.Id)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Int("id", input.Id).Msg("User not found")
+		resp.Message = "User not found"
+		resp.ErrorCode = ErrorCodeNotFound
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "User retrieved successfully"
+	resp.User = user
+	return resp
+}
+
+// DeleteUser hard-deletes a user for an admin (GDPR erasure). The actor must
+// hold the super_user permission. Refresh tokens cascade via the foreign key.
+func (s *service) DeleteUser(ctx context.Context, input *DeleteUserInput) *DeleteUserOutput {
+	resp := &DeleteUserOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can delete users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	_, errType, err := db.LockUserById(ctx, input.Id)
+	if errType == ErrTypeNotFound {
+		log.Info().Str("traceId", input.TraceId).Int("id", input.Id).Msg("User not found; treating delete as successful no-op")
+		resp.Success = true
+		resp.Message = "User deleted successfully"
+		return resp
+	}
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.DeleteUser(ctx, input.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to delete user")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().Str("traceId", input.TraceId).Int("id", input.Id).Msg("User deleted successfully")
+
+	resp.Success = true
+	resp.Message = "User deleted successfully"
+	return resp
+}
+
 // GrantPermission assigns a permission to a target user.
 // Only an actor holding the "<actorId>:super_user" permission may do this.
 func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput {

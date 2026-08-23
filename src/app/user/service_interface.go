@@ -58,6 +58,15 @@ type Service interface {
 	// RevokePermission removes a permission from a target user.
 	// Only a user holding the "<actorId>:super_user" permission may do this.
 	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+
+	// ListUsers lists users (admin). Requires the super_user permission.
+	ListUsers(ctx context.Context, input *ListUsersInput) *ListUsersOutput
+
+	// GetUser fetches any user by id (admin). Requires the super_user permission.
+	GetUser(ctx context.Context, input *GetUserInput) *GetUserOutput
+
+	// DeleteUser hard-deletes a user (admin). Requires the super_user permission.
+	DeleteUser(ctx context.Context, input *DeleteUserInput) *DeleteUserOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -90,6 +99,9 @@ const (
 	// ErrorCodeLocked covers accounts temporarily locked by repeated failed
 	// login attempts. Clients should surface it as a throttle/retry state.
 	ErrorCodeLocked ErrorCode = "locked"
+	// ErrorCodeNotFound covers lookups that matched no row (e.g. a user id
+	// that does not exist). The handler maps it to HTTP 404.
+	ErrorCodeNotFound ErrorCode = "not_found"
 	// ErrorCodeInternal covers real system failures (storage, hashing, commit).
 	ErrorCodeInternal ErrorCode = "internal"
 )
@@ -216,6 +228,58 @@ type GetProfileByIdOutput struct {
 	TraceId   string
 	ErrorCode ErrorCode
 	User      User
+}
+
+// ListUsersInput lists users (admin). ActorId must hold super_user.
+type ListUsersInput struct {
+	TraceId string
+	ActorId int
+	Page    int
+	Size    int
+	Filter  string
+}
+
+// ListUsersOutput is the paginated admin user list.
+type ListUsersOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Users     []User
+	Total     int
+	Page      int
+	Size      int
+}
+
+// GetUserInput fetches a user by id (admin). ActorId must hold super_user.
+type GetUserInput struct {
+	TraceId string
+	ActorId int
+	Id      int
+}
+
+// GetUserOutput is the admin user fetch result.
+type GetUserOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	User      User
+}
+
+// DeleteUserInput deletes a user by id (admin). ActorId must hold super_user.
+type DeleteUserInput struct {
+	TraceId string
+	ActorId int
+	Id      int
+}
+
+// DeleteUserOutput is the admin user deletion result.
+type DeleteUserOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
 }
 
 // GrantPermissionInput represents input for assigning a permission to a user.
