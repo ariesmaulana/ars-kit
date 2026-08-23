@@ -261,6 +261,16 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		resp.ErrorCode = ErrorCodeUnauthorized
 		return resp
 	}
+	if user.Status != UserStatusActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Str("username", input.Username).
+			Str("status", string(user.Status)).
+			Msg("Login blocked: account disabled")
+		resp.Message = "Account disabled"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
 
 	// Lock the row for the rest of the login attempt. Serializing attempts per
 	// account makes the failed-attempt counter updates atomic and prevents a
