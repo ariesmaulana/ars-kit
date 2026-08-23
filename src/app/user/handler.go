@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +106,11 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.PUT("/profile/password", h.UpdatePassword)
 	protected.POST("/permissions/grant", h.GrantPermission)
 	protected.POST("/permissions/revoke", h.RevokePermission)
+
+	// Admin routes (super_user-gated inside the service)
+	protected.GET("", h.ListUsers)
+	protected.GET("/:id", h.GetUser)
+	protected.DELETE("/:id", h.DeleteUser)
 }
 
 // HTTP Request/Response structs
@@ -712,6 +718,180 @@ func (h *Handler) RevokePermission(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ManagePermissionResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// UserListResponse is the HTTP response for listing users.
+type UserListResponse struct {
+	Success    bool               `json:"success"`
+	Message    string             `json:"message"`
+	Data       []UserDTO          `json:"data,omitempty"`
+	Pagination PaginationResponse `json:"pagination,omitempty"`
+}
+
+// ListUsers handles GET /api/v1/users
+// @Summary List users
+// @Description List users with pagination and an optional username/email
+// @Description filter. Requires the super_user permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page (1-based, default 1)"
+// @Param size query int false "Page size (default 10)"
+// @Param q query string false "Filter by username or email substring"
+// @Success 200 {object} UserListResponse
+// @Failure 401 {object} UserListResponse
+// @Failure 403 {object} UserListResponse
+// @Failure 500 {object} UserListResponse
+// @Router /api/v1/users [get]
+func (h *Handler) ListUsers(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserListResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	size, _ := strconv.Atoi(c.QueryParam("size"))
+	filter := c.QueryParam("q")
+
+	output := h.service.ListUsers(c.Request().Context(), &ListUsersInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Page:    page,
+		Size:    size,
+		Filter:  filter,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserListResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	users := make([]UserDTO, 0, len(output.Users))
+	for _, u := range output.Users {
+		users = append(users, toUserDTO(u))
+	}
+
+	return c.JSON(http.StatusOK, UserListResponse{
+		Success:    true,
+		Message:    output.Message,
+		Data:       users,
+		Pagination: PaginationResponse{Page: output.Page, PageSize: output.Size, Total: output.Total},
+	})
+}
+
+// GetUser handles GET /api/v1/users/:id
+// @Summary Get a user by id
+// @Description Fetch any user by id. Requires the super_user permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id} [get]
+func (h *Handler) GetUser(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	output := h.service.GetUser(c.Request().Context(), &GetUserInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Id:      id,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    &dto,
+	})
+}
+
+// DeleteUser handles DELETE /api/v1/users/:id
+// @Summary Delete a user
+// @Description Hard-delete a user (GDPR erasure). Requires the super_user
+// @Description permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id} [delete]
+func (h *Handler) DeleteUser(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	output := h.service.DeleteUser(c.Request().Context(), &DeleteUserInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Id:      id,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: output.Message,
 	})

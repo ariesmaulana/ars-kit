@@ -10,6 +10,18 @@ import (
 )
 
 type ServiceFake struct {
+	DeleteUserStub        func(context.Context, *user.DeleteUserInput) *user.DeleteUserOutput
+	deleteUserMutex       sync.RWMutex
+	deleteUserArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.DeleteUserInput
+	}
+	deleteUserReturns struct {
+		result1 *user.DeleteUserOutput
+	}
+	deleteUserReturnsOnCall map[int]struct {
+		result1 *user.DeleteUserOutput
+	}
 	DemoWorkflowStub        func(context.Context, *user.DemoWorkflowInput) *user.DemoWorkflowOutput
 	demoWorkflowMutex       sync.RWMutex
 	demoWorkflowArgsForCall []struct {
@@ -34,6 +46,18 @@ type ServiceFake struct {
 	getProfileByIdReturnsOnCall map[int]struct {
 		result1 *user.GetProfileByIdOutput
 	}
+	GetUserStub        func(context.Context, *user.GetUserInput) *user.GetUserOutput
+	getUserMutex       sync.RWMutex
+	getUserArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.GetUserInput
+	}
+	getUserReturns struct {
+		result1 *user.GetUserOutput
+	}
+	getUserReturnsOnCall map[int]struct {
+		result1 *user.GetUserOutput
+	}
 	GrantPermissionStub        func(context.Context, *user.GrantPermissionInput) *user.GrantPermissionOutput
 	grantPermissionMutex       sync.RWMutex
 	grantPermissionArgsForCall []struct {
@@ -57,6 +81,18 @@ type ServiceFake struct {
 	}
 	grantPermissionSystemReturnsOnCall map[int]struct {
 		result1 *workflow.GrantPermissionOutput
+	}
+	ListUsersStub        func(context.Context, *user.ListUsersInput) *user.ListUsersOutput
+	listUsersMutex       sync.RWMutex
+	listUsersArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.ListUsersInput
+	}
+	listUsersReturns struct {
+		result1 *user.ListUsersOutput
+	}
+	listUsersReturnsOnCall map[int]struct {
+		result1 *user.ListUsersOutput
 	}
 	LoginStub        func(context.Context, *user.LoginInput) *user.LoginOutput
 	loginMutex       sync.RWMutex
@@ -156,6 +192,68 @@ type ServiceFake struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *ServiceFake) DeleteUser(arg1 context.Context, arg2 *user.DeleteUserInput) *user.DeleteUserOutput {
+	fake.deleteUserMutex.Lock()
+	ret, specificReturn := fake.deleteUserReturnsOnCall[len(fake.deleteUserArgsForCall)]
+	fake.deleteUserArgsForCall = append(fake.deleteUserArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.DeleteUserInput
+	}{arg1, arg2})
+	stub := fake.DeleteUserStub
+	fakeReturns := fake.deleteUserReturns
+	fake.recordInvocation("DeleteUser", []interface{}{arg1, arg2})
+	fake.deleteUserMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) DeleteUserCallCount() int {
+	fake.deleteUserMutex.RLock()
+	defer fake.deleteUserMutex.RUnlock()
+	return len(fake.deleteUserArgsForCall)
+}
+
+func (fake *ServiceFake) DeleteUserCalls(stub func(context.Context, *user.DeleteUserInput) *user.DeleteUserOutput) {
+	fake.deleteUserMutex.Lock()
+	defer fake.deleteUserMutex.Unlock()
+	fake.DeleteUserStub = stub
+}
+
+func (fake *ServiceFake) DeleteUserArgsForCall(i int) (context.Context, *user.DeleteUserInput) {
+	fake.deleteUserMutex.RLock()
+	defer fake.deleteUserMutex.RUnlock()
+	argsForCall := fake.deleteUserArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) DeleteUserReturns(result1 *user.DeleteUserOutput) {
+	fake.deleteUserMutex.Lock()
+	defer fake.deleteUserMutex.Unlock()
+	fake.DeleteUserStub = nil
+	fake.deleteUserReturns = struct {
+		result1 *user.DeleteUserOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) DeleteUserReturnsOnCall(i int, result1 *user.DeleteUserOutput) {
+	fake.deleteUserMutex.Lock()
+	defer fake.deleteUserMutex.Unlock()
+	fake.DeleteUserStub = nil
+	if fake.deleteUserReturnsOnCall == nil {
+		fake.deleteUserReturnsOnCall = make(map[int]struct {
+			result1 *user.DeleteUserOutput
+		})
+	}
+	fake.deleteUserReturnsOnCall[i] = struct {
+		result1 *user.DeleteUserOutput
+	}{result1}
 }
 
 func (fake *ServiceFake) DemoWorkflow(arg1 context.Context, arg2 *user.DemoWorkflowInput) *user.DemoWorkflowOutput {
@@ -282,6 +380,68 @@ func (fake *ServiceFake) GetProfileByIdReturnsOnCall(i int, result1 *user.GetPro
 	}{result1}
 }
 
+func (fake *ServiceFake) GetUser(arg1 context.Context, arg2 *user.GetUserInput) *user.GetUserOutput {
+	fake.getUserMutex.Lock()
+	ret, specificReturn := fake.getUserReturnsOnCall[len(fake.getUserArgsForCall)]
+	fake.getUserArgsForCall = append(fake.getUserArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.GetUserInput
+	}{arg1, arg2})
+	stub := fake.GetUserStub
+	fakeReturns := fake.getUserReturns
+	fake.recordInvocation("GetUser", []interface{}{arg1, arg2})
+	fake.getUserMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) GetUserCallCount() int {
+	fake.getUserMutex.RLock()
+	defer fake.getUserMutex.RUnlock()
+	return len(fake.getUserArgsForCall)
+}
+
+func (fake *ServiceFake) GetUserCalls(stub func(context.Context, *user.GetUserInput) *user.GetUserOutput) {
+	fake.getUserMutex.Lock()
+	defer fake.getUserMutex.Unlock()
+	fake.GetUserStub = stub
+}
+
+func (fake *ServiceFake) GetUserArgsForCall(i int) (context.Context, *user.GetUserInput) {
+	fake.getUserMutex.RLock()
+	defer fake.getUserMutex.RUnlock()
+	argsForCall := fake.getUserArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) GetUserReturns(result1 *user.GetUserOutput) {
+	fake.getUserMutex.Lock()
+	defer fake.getUserMutex.Unlock()
+	fake.GetUserStub = nil
+	fake.getUserReturns = struct {
+		result1 *user.GetUserOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) GetUserReturnsOnCall(i int, result1 *user.GetUserOutput) {
+	fake.getUserMutex.Lock()
+	defer fake.getUserMutex.Unlock()
+	fake.GetUserStub = nil
+	if fake.getUserReturnsOnCall == nil {
+		fake.getUserReturnsOnCall = make(map[int]struct {
+			result1 *user.GetUserOutput
+		})
+	}
+	fake.getUserReturnsOnCall[i] = struct {
+		result1 *user.GetUserOutput
+	}{result1}
+}
+
 func (fake *ServiceFake) GrantPermission(arg1 context.Context, arg2 *user.GrantPermissionInput) *user.GrantPermissionOutput {
 	fake.grantPermissionMutex.Lock()
 	ret, specificReturn := fake.grantPermissionReturnsOnCall[len(fake.grantPermissionArgsForCall)]
@@ -403,6 +563,68 @@ func (fake *ServiceFake) GrantPermissionSystemReturnsOnCall(i int, result1 *work
 	}
 	fake.grantPermissionSystemReturnsOnCall[i] = struct {
 		result1 *workflow.GrantPermissionOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListUsers(arg1 context.Context, arg2 *user.ListUsersInput) *user.ListUsersOutput {
+	fake.listUsersMutex.Lock()
+	ret, specificReturn := fake.listUsersReturnsOnCall[len(fake.listUsersArgsForCall)]
+	fake.listUsersArgsForCall = append(fake.listUsersArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.ListUsersInput
+	}{arg1, arg2})
+	stub := fake.ListUsersStub
+	fakeReturns := fake.listUsersReturns
+	fake.recordInvocation("ListUsers", []interface{}{arg1, arg2})
+	fake.listUsersMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) ListUsersCallCount() int {
+	fake.listUsersMutex.RLock()
+	defer fake.listUsersMutex.RUnlock()
+	return len(fake.listUsersArgsForCall)
+}
+
+func (fake *ServiceFake) ListUsersCalls(stub func(context.Context, *user.ListUsersInput) *user.ListUsersOutput) {
+	fake.listUsersMutex.Lock()
+	defer fake.listUsersMutex.Unlock()
+	fake.ListUsersStub = stub
+}
+
+func (fake *ServiceFake) ListUsersArgsForCall(i int) (context.Context, *user.ListUsersInput) {
+	fake.listUsersMutex.RLock()
+	defer fake.listUsersMutex.RUnlock()
+	argsForCall := fake.listUsersArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) ListUsersReturns(result1 *user.ListUsersOutput) {
+	fake.listUsersMutex.Lock()
+	defer fake.listUsersMutex.Unlock()
+	fake.ListUsersStub = nil
+	fake.listUsersReturns = struct {
+		result1 *user.ListUsersOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) ListUsersReturnsOnCall(i int, result1 *user.ListUsersOutput) {
+	fake.listUsersMutex.Lock()
+	defer fake.listUsersMutex.Unlock()
+	fake.ListUsersStub = nil
+	if fake.listUsersReturnsOnCall == nil {
+		fake.listUsersReturnsOnCall = make(map[int]struct {
+			result1 *user.ListUsersOutput
+		})
+	}
+	fake.listUsersReturnsOnCall[i] = struct {
+		result1 *user.ListUsersOutput
 	}{result1}
 }
 
