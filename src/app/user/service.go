@@ -48,6 +48,12 @@ type service struct {
 	jwtService        *JWTService
 }
 
+const (
+	minPasswordLength      = 12
+	passwordHistoryDepth   = 5
+	passwordPolicyErrorMsg = "Password must be at least 12 characters long"
+)
+
 // NewService creates a new user service instance. A zero LoginThrottleConfig
 // falls back to DefaultLoginThrottleConfig so callers that omit the policy
 // still get a sane lockout instead of locking every account after one failure.
@@ -122,6 +128,12 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to insert user")
 			resp.Message = "Username or email already exists"
 			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to insert password history")
+			resp.Message = "Failed to register user"
+			resp.ErrorCode = ErrorCodeInternal
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to insert user")
@@ -202,9 +214,9 @@ func validateRegisterInput(input *RegisterInput) string {
 		log.Warn().Msg("Password empty")
 		return "Password is mandatory"
 	}
-	if len(input.Password) < 7 {
+	if len(input.Password) < minPasswordLength {
 		log.Warn().Msg("Password too short")
-		return "Password must be at least 7 characters long"
+		return passwordPolicyErrorMsg
 	}
 	if input.FullName == "" {
 		log.Warn().Msg("FullName empty")
@@ -767,9 +779,9 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		return resp
 	}
 
-	if len(input.NewPassword) < 7 {
+	if len(input.NewPassword) < minPasswordLength {
 		log.Warn().Msg("New password too short")
-		resp.Message = "Password must be at least 7 characters long"
+		resp.Message = passwordPolicyErrorMsg
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -825,6 +837,20 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		resp.ErrorCode = ErrorCodeUnauthorized
 		return resp
 	}
+	recentHashes, err := db.GetRecentPasswordHashes(ctx, input.Id, passwordHistoryDepth)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to fetch password history")
+		resp.Message = "Failed to update password"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	for _, oldHash := range recentHashes {
+		if bcrypt.CompareHashAndPassword([]byte(oldHash), []byte(input.NewPassword)) == nil {
+			resp.Message = "New password must be different from recent passwords"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+	}
 
 	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
@@ -840,6 +866,12 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update password")
 		resp.Message = err.Error()
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	if err := db.InsertPasswordHistory(ctx, input.Id, string(hashedPassword)); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert password history")
+		resp.Message = "Failed to update password"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
@@ -1202,4 +1234,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	resp.Success = true
 	resp.Message = "Permission revoked successfully"
 	return resp
-}
+		resp.Message = "Failed to update password"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}

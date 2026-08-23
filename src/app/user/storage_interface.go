@@ -48,6 +48,12 @@ type StorageTx interface {
 	// UpdatePassword updates a user's password
 	UpdatePassword(ctx context.Context, id int, newPassword string) error
 
+	// InsertPasswordHistory stores a password hash snapshot for reuse checks.
+	InsertPasswordHistory(ctx context.Context, userID int, passwordHash string) error
+
+	// GetRecentPasswordHashes returns latest password hashes for reuse checks.
+	GetRecentPasswordHashes(ctx context.Context, userID int, limit int) ([]string, error)
+
 	// LockUserById locks a user row for update and returns the user
 	// This implements pessimistic locking to prevent concurrent modifications
 	LockUserById(ctx context.Context, id int) (User, StorageErrorType, error)

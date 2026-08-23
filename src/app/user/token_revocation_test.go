@@ -67,7 +67,7 @@ func TestTokenRevocation_RegisterPersistsRefreshToken(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
 		suite.Describe(t, "Register persists refresh token", func() {
 			suite.Run(t, "register issues a persisted refresh token", func(t *testing.T, ctx context.Context, app *UserApp) {
-				userData, _, _ := registerUser(t, app, "freshreg", "freshreg@example.com", "password123")
+				userData, _, _ := registerUser(t, app, "freshreg", "freshreg@example.com", "password12345")
 				assert.Equal(t, 1, app.Helper.CountRefreshTokens(ctx, t, userData.Id))
 				assert.Equal(t, 1, app.Helper.CountActiveRefreshTokens(ctx, t, userData.Id))
 			})

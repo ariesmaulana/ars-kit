@@ -168,6 +168,45 @@ func (st *storageTx) UpdatePassword(ctx context.Context, id int, newPassword str
 	return nil
 }
 
+func (st *storageTx) InsertPasswordHistory(ctx context.Context, userID int, passwordHash string) error {
+	query := `INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)`
+	if _, err := st.tx.Exec(ctx, query, userID, passwordHash); err != nil {
+		return fmt.Errorf("failed to insert password history: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) GetRecentPasswordHashes(ctx context.Context, userID int, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+	query := `
+		SELECT password_hash
+		FROM password_history
+		WHERE user_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+	`
+	rows, err := st.tx.Query(ctx, query, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent password hashes: %w", err)
+	}
+	defer rows.Close()
+
+	hashes := make([]string, 0, limit)
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, fmt.Errorf("failed to scan password history row: %w", err)
+		}
+		hashes = append(hashes, hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate password history rows: %w", err)
+	}
+	return hashes, nil
+}
+
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
