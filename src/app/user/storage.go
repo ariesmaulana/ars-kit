@@ -46,7 +46,7 @@ func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter strin
 	}
 
 	query := `
-		SELECT id, username, email, full_name, status, created_at, updated_at
+		SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at
 		FROM users
 		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
 		ORDER BY id
@@ -121,7 +121,7 @@ func (st *storageTx) InsertUser(ctx context.Context, username, email, fullName, 
 	return id, ErrTypeNone, nil
 }
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
-	query := `	SELECT id, username, email, full_name, status, created_at, updated_at FROM users WHERE id = $1`
+	query := `	SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -131,7 +131,7 @@ func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 }
 
 func (st *storageTx) GetUserByUsername(ctx context.Context, username string) (User, error) {
-	query := `	SELECT id, username, email, full_name, status, created_at, updated_at FROM users WHERE username = $1`
+	query := `	SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE username = $1`
 	row := st.tx.QueryRow(ctx, query, username)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -210,7 +210,7 @@ func (st *storageTx) GetRecentPasswordHashes(ctx context.Context, userID int, li
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
-	query := `SELECT id, username, email, full_name, status, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
+	query := `SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -306,11 +306,13 @@ func (st *storageTx) RevokeAllUserRefreshTokens(ctx context.Context, userID int)
 func convertUserRow(row pgx.Row) (User, error) {
 	var user User
 	var status string
-	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &user.CreatedAt, &user.UpdatedAt)
+	var lastLoginAt *time.Time
+	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &lastLoginAt, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return User{}, err
 	}
 	user.Status = UserStatus(status)
+	user.LastLoginAt = lastLoginAt
 	return user, nil
 }
 
@@ -350,6 +352,17 @@ func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
 	_, err := st.tx.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to reset login state: %w", err)
+	}
+	return nil
+}
+
+// UpdateLastLogin stamps the user's last_login_at with the current time. It is
+// idempotent: calling it again later just advances the timestamp.
+func (st *storageTx) UpdateLastLogin(ctx context.Context, id int) error {
+	query := `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to update last login: %w", err)
 	}
 	return nil
 }

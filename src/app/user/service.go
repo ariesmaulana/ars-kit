@@ -379,6 +379,15 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
+	// Stamp last login for audit/traceability. Runs in the same transaction as
+	// the login so it commits atomically with the issued token.
+	if err := db.UpdateLastLogin(ctx, user.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update last login")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	log.Info().
 		Str("traceId", input.TraceId).
 		Str("username", input.Username).
@@ -415,6 +424,10 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	resp.Success = true
 	resp.Message = "Login successful"
 	resp.User = user
+	// Reflect the just-stamped login time on the returned user so callers
+	// (and tests) see it without a second lookup.
+	lastLogin := time.Now().UTC()
+	resp.User.LastLoginAt = &lastLogin
 
 	return resp
 }
@@ -1234,7 +1247,4 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	resp.Success = true
 	resp.Message = "Permission revoked successfully"
 	return resp
-		resp.Message = "Failed to update password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
+}
