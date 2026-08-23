@@ -406,7 +406,6 @@ func TestUserLogin(t *testing.T) {
 							message: "Invalid username or password",
 						},
 					},
-
 					// ===== Validation Tests: Password =====
 					{
 						name: "Should fail when password is empty",
