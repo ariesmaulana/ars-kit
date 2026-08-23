@@ -11,13 +11,14 @@ const (
 )
 
 type User struct {
-	Id       int
-	Username string
-	Email    string
-	FullName string
-	Status    UserStatus
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Id          int
+	Username    string
+	Email       string
+	FullName    string
+	Status      UserStatus
+	LastLoginAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // LoginState is the persisted per-account login-throttle state.

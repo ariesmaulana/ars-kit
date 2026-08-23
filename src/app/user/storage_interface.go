@@ -73,6 +73,9 @@ type StorageTx interface {
 	// successful login. Callers must hold the row lock (LockUserLoginState).
 	ResetLoginState(ctx context.Context, id int) error
 
+	// UpdateLastLogin sets last_login_at to the current time for the given user.
+	UpdateLastLogin(ctx context.Context, id int) error
+
 	// GetUserTokenVersion reads a user's current token_version within the
 	// transaction.
 	GetUserTokenVersion(ctx context.Context, id int) (int, error)

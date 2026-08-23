@@ -3,6 +3,7 @@ package user_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
@@ -333,4 +334,13 @@ func (h *TestHelper) GetUserTokenVersion(ctx context.Context, t *testing.T, user
 	err := h.pool.QueryRow(ctx, "SELECT token_version FROM users WHERE id = $1", userID).Scan(&version)
 	assert.Nil(t, err)
 	return version
+}
+
+// GetLastLoginAt reads the persisted last_login_at for a user. It returns nil
+// when the column is still NULL (e.g. the user has never logged in).
+func (h *TestHelper) GetLastLoginAt(ctx context.Context, t *testing.T, id int) *time.Time {
+	var lastLoginAt *time.Time
+	err := h.pool.QueryRow(ctx, "SELECT last_login_at FROM users WHERE id = $1", id).Scan(&lastLoginAt)
+	assert.Nil(t, err)
+	return lastLoginAt
 }

@@ -358,6 +358,8 @@ func TestUserLogin(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.success, output.User.LastLoginAt != nil, r.name)
+
 			}
 
 			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
