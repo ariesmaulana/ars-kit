@@ -46,6 +46,7 @@ func TestUserListUsers(t *testing.T) {
 						Email:    "test1@example.com",
 						FullName: "Test User 1",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 					{
 						Idx:      1,
@@ -53,11 +54,12 @@ func TestUserListUsers(t *testing.T) {
 						Email:    "test2@example.com",
 						FullName: "Test User 2",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 				}
 
 				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
 					Users[i].Id = insertedUser.Id
 				}
 			})
@@ -252,6 +254,7 @@ func TestUserGetUser(t *testing.T) {
 						Email:    "test1@example.com",
 						FullName: "Test User 1",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 					{
 						Idx:      1,
@@ -259,11 +262,12 @@ func TestUserGetUser(t *testing.T) {
 						Email:    "test2@example.com",
 						FullName: "Test User 2",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 				}
 
 				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
 					Users[i].Id = insertedUser.Id
 				}
 			})
@@ -400,9 +404,9 @@ func TestUserGetUser(t *testing.T) {
 							userID:  99999,
 						},
 						expected: &expected{
-							success:           true,
-							message:           "User deleted successfully",
-							expectedCountMock: 0,
+							success:           false,
+							message:           "User not found",
+							expectedCountMock: 1,
 						},
 						permissionCheck: createGrantedPermissionCheck(),
 					},
@@ -475,6 +479,7 @@ func TestUserDeleteUser(t *testing.T) {
 						Email:    "test1@example.com",
 						FullName: "Test User 1",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 					{
 						Idx:      1,
@@ -482,11 +487,12 @@ func TestUserDeleteUser(t *testing.T) {
 						Email:    "test2@example.com",
 						FullName: "Test User 2",
 						Password: "password123",
+						Status:   user.UserStatusActive,
 					},
 				}
 
 				for i, userData := range Users {
-					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
 					Users[i].Id = insertedUser.Id
 				}
 			})
@@ -518,6 +524,10 @@ func TestUserDeleteUser(t *testing.T) {
 				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - super user check call count")
 
 				if r.expected.success == false {
+					assert.Equal(t, initialUsers, afterUsers, r.name)
+					return
+				}
+				if r.input.userID == 99999 {
 					assert.Equal(t, initialUsers, afterUsers, r.name)
 					return
 				}

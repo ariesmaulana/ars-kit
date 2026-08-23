@@ -31,22 +31,31 @@ type DataUser struct {
 	Email    string
 	FullName string
 	Password string // Plain text password for testing
+	Status   user.UserStatus
 }
 
 // InsertUser inserts a single user and returns it
-func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, email, fullName, password string) *user.User {
+func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, email, fullName, password string, status ...user.UserStatus) *user.User {
 	query := `
-		INSERT INTO users (username, email, full_name, password, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		RETURNING id, username, email, full_name, created_at, updated_at
+		INSERT INTO users (username, email, full_name, password, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		RETURNING id, username, email, full_name, status, created_at, updated_at
 	`
 
 	var u user.User
-	err := h.pool.QueryRow(ctx, query, username, email, fullName, password).Scan(
+	userStatus := user.UserStatusActive
+	if len(status) > 0 && status[0] != "" {
+		userStatus = status[0]
+	}
+	if userStatus == "" {
+		userStatus = user.UserStatusActive
+	}
+	err := h.pool.QueryRow(ctx, query, username, email, fullName, password, userStatus).Scan(
 		&u.Id,
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -56,12 +65,12 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 }
 
 // InsertUserWithHashedPassword inserts a user with a plain text password that gets hashed
-func (h *TestHelper) InsertUserWithHashedPassword(ctx context.Context, t *testing.T, username, email, fullName, plainPassword string) *user.User {
+func (h *TestHelper) InsertUserWithHashedPassword(ctx context.Context, t *testing.T, username, email, fullName, plainPassword string, status ...user.UserStatus) *user.User {
 	// Hash the password using bcrypt
 	hashedPassword, err := hashPassword(plainPassword)
 	assert.Nil(t, err, "Failed to hash password")
 
-	return h.InsertUser(ctx, t, username, email, fullName, hashedPassword)
+	return h.InsertUser(ctx, t, username, email, fullName, hashedPassword, status...)
 }
 
 // hashPassword hashes a plain text password using bcrypt
@@ -80,7 +89,7 @@ func (h *TestHelper) InsertUsers(ctx context.Context, t *testing.T, users []User
 	result := make([]*user.User, 0, len(users))
 
 	for _, fixture := range users {
-		u := h.InsertUser(ctx, t, fixture.Username, fixture.Email, fixture.FullName, fixture.Password)
+		u := h.InsertUser(ctx, t, fixture.Username, fixture.Email, fixture.FullName, fixture.Password, fixture.Status)
 		result = append(result, u)
 	}
 
@@ -93,6 +102,7 @@ type UserFixture struct {
 	Email    string
 	FullName string
 	Password string
+	Status   user.UserStatus
 }
 
 // ClearUsers removes all users from the database
@@ -104,7 +114,7 @@ func (h *TestHelper) ClearUsers(ctx context.Context, t *testing.T) {
 // GetUserById retrieves a user by ID
 func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -115,6 +125,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -126,7 +137,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 // GetUserByUsername retrieves a user by username
 func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, username string) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -137,6 +148,7 @@ func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, userna
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -165,7 +177,7 @@ func (h *TestHelper) CountUsers(ctx context.Context, t *testing.T) int {
 // GetAllUsers retrieves all users as a map indexed by user ID
 func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		ORDER BY id
 	`
@@ -182,6 +194,7 @@ func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user
 			&u.Username,
 			&u.Email,
 			&u.FullName,
+			&u.Status,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		)
