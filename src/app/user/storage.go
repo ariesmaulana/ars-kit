@@ -356,11 +356,12 @@ func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
 	return nil
 }
 
-// UpdateLastLogin stamps the user's last_login_at with the current time. It is
-// idempotent: calling it again later just advances the timestamp.
-func (st *storageTx) UpdateLastLogin(ctx context.Context, id int) error {
-	query := `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`
-	_, err := st.tx.Exec(ctx, query, id)
+// UpdateLastLogin stamps the user's last_login_at (and updated_at) with the
+// given time. The timestamp is passed in by the caller (typically clock.Now())
+// so the write is deterministic and testable, rather than using SQL NOW().
+func (st *storageTx) UpdateLastLogin(ctx context.Context, id int, at time.Time) error {
+	query := `UPDATE users SET last_login_at = $2::timestamptz, updated_at = $2::timestamp WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id, at)
 	if err != nil {
 		return fmt.Errorf("failed to update last login: %w", err)
 	}

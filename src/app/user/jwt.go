@@ -14,6 +14,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/labstack/echo/v4"
 	"github.com/rs/xid"
+
+	"github.com/ariesmaulana/ars-kit/src/clock"
 )
 
 var (
@@ -106,9 +108,9 @@ func (j *JWTService) GenerateToken(userId int, username string, tokenVersion int
 			ID:        xid.New().String(),
 			Issuer:    j.config.Issuer,
 			Audience:  jwt.ClaimStrings{j.config.Audience},
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * time.Duration(j.config.ExpirationHours))),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(clock.Now().Add(time.Hour * time.Duration(j.config.ExpirationHours))),
+			IssuedAt:  jwt.NewNumericDate(clock.Now()),
+			NotBefore: jwt.NewNumericDate(clock.Now()),
 		},
 	}
 
