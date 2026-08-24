@@ -7,6 +7,7 @@ import (
 	"github.com/ariesmaulana/ars-kit/database"
 	permissionfakes "github.com/ariesmaulana/ars-kit/src/app/permission/fakes"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 )
 
@@ -19,16 +20,19 @@ type UserApp struct {
 	PermissionSvcMock *permissionfakes.ServiceFake
 }
 
-// TestSuite wraps testsuite.Suite for user tests
+// TestSuite wraps testsuite.Suite for user tests.
+// Clock optionally pins "now" for services built by Setup/Run
+// (nil = real time). Set it before Setup/Run, e.g. suite.Clock = clock.Fixed(t0).
 type TestSuite struct {
 	*testsuite.Suite
+	Clock clock.Source
 }
 
 // Run executes a test scenario with initialized UserApp and context
 func (ts *TestSuite) Run(t *testing.T, scenario string, fn func(t *testing.T, ctx context.Context, app *UserApp)) {
 	ts.Runs(t, scenario, func(t *testing.T, appCtx *testsuite.AppContext) {
 		ctx := context.Background()
-		app := initUserApp(appCtx)
+		app := initUserAppWithThrottle(appCtx, user.DefaultLoginThrottleConfig(), ts.Clock)
 		fn(t, ctx, app)
 	})
 }
@@ -37,7 +41,7 @@ func (ts *TestSuite) Run(t *testing.T, scenario string, fn func(t *testing.T, ct
 func (ts *TestSuite) Setup(fn func(ctx context.Context, app *UserApp)) {
 	ts.Before(func(appCtx *testsuite.AppContext) {
 		ctx := context.Background()
-		app := initUserApp(appCtx)
+		app := initUserAppWithThrottle(appCtx, user.DefaultLoginThrottleConfig(), ts.Clock)
 		fn(ctx, app)
 	})
 }
@@ -52,8 +56,9 @@ func initUserApp(app *testsuite.AppContext) *UserApp {
 
 // initUserAppWithThrottle is initUserApp with a caller-provided login-throttle
 // policy so throttle-specific tests can use small, fast windows instead of the
-// 15-minute defaults.
-func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrottleConfig) *UserApp {
+// 15-minute defaults. An optional clock.Source pins "now" for the service
+// (per-instance, no global state) so time-dependent assertions are deterministic.
+func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrottleConfig, clockSource ...clock.Source) *UserApp {
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
 	permissionService := &permissionfakes.ServiceFake{}
@@ -61,7 +66,7 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,
 	})
-	service := user.NewService(storage, permissionService, throttle, jwtService)
+	service := user.NewService(storage, permissionService, throttle, jwtService, clockSource...)
 
 	return &UserApp{
 		AppContext:        app,

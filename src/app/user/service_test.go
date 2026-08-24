@@ -3,9 +3,11 @@ package user_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 )
@@ -295,9 +297,15 @@ func TestUserLogin(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
 		suite.Describe(t, "User Login", func() {
 
+			// Pin "now" so the stamped last_login_at is deterministic.
+			t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			oldLogin := t0.Add(-24 * time.Hour)
+			suite.Clock = clock.Fixed(t0)
+
 			var Users []DataUser
 
 			type input struct {
+				uid      int // fixture user id (0 = no user), for last_login_at checks
 				username string
 				password string
 			}
@@ -315,12 +323,13 @@ func TestUserLogin(t *testing.T) {
 			suite.Setup(func(ctx context.Context, app *UserApp) {
 				Users = []DataUser{
 					{
-						Idx:      0,
-						Username: "testuser1",
-						Email:    "test1@example.com",
-						FullName: "Test User 1",
-						Password: "password123",
-						Status:   user.UserStatusActive,
+						Idx:         0,
+						Username:    "testuser1",
+						Email:       "test1@example.com",
+						FullName:    "Test User 1",
+						Password:    "password123",
+						Status:      user.UserStatusActive,
+						LastLoginAt: &oldLogin,
 					},
 					{
 						Idx:      1,
@@ -344,11 +353,20 @@ func TestUserLogin(t *testing.T) {
 				for i, userData := range Users {
 					insertedUser := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
 					Users[i].Id = insertedUser.Id // Store actual database ID
+					if userData.LastLoginAt != nil {
+						app.Helper.SetLastLoginAt(ctx, t, insertedUser.Id, *userData.LastLoginAt)
+					}
 				}
 			})
 
 			runtest := func(t *testing.T, app *UserApp, r *testRow) {
 				ctx := context.Background()
+
+				// Snapshot so a failed login can be asserted unchanged.
+				var before *time.Time
+				if !r.expected.success {
+					before = app.Helper.GetLastLoginAt(ctx, t, r.input.uid)
+				}
 
 				output := app.Service.Login(ctx, &user.LoginInput{
 					TraceId:  "trace-test",
@@ -358,8 +376,24 @@ func TestUserLogin(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
-				assert.Equal(t, r.expected.success, output.User.LastLoginAt != nil, r.name)
 
+				// Successful login stamps last_login_at with the mocked now.
+				if r.expected.success {
+					assert.Equal(t, &t0, output.User.LastLoginAt, r.name)
+					assert.WithinDuration(t, t0, *app.Helper.GetLastLoginAt(ctx, t, r.input.uid), time.Second, r.name)
+					return
+				}
+
+				// Failed login never changes last_login_at (NULL stays NULL,
+				// an existing value stays as-is).
+				stored := app.Helper.GetLastLoginAt(ctx, t, r.input.uid)
+				if before == nil {
+					assert.Nil(t, stored, r.name)
+				} else {
+					// DB round-trip returns the instant in the local zone, so
+					// compare instants rather than wall-clock representation.
+					assert.WithinDuration(t, *before, *stored, time.Second, r.name)
+				}
 			}
 
 			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
@@ -374,6 +408,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should login successfully with valid credentials",
 						input: &input{
+							uid:      Users[0].Id,
 							username: "testuser1",
 							password: "password123",
 						},
@@ -385,6 +420,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should login successfully with different user",
 						input: &input{
+							uid:      Users[1].Id,
 							username: "testuser2",
 							password: "password123",
 						},
@@ -421,6 +457,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should fail when password is empty",
 						input: &input{
+							uid:      Users[0].Id,
 							username: "testuser1",
 							password: "",
 						},
@@ -432,6 +469,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should fail when password is incorrect",
 						input: &input{
+							uid:      Users[0].Id,
 							username: "testuser1",
 							password: "wrongpassword",
 						},
@@ -443,6 +481,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should fail when password is partially correct",
 						input: &input{
+							uid:      Users[0].Id,
 							username: "testuser1",
 							password: "password12",
 						},
@@ -454,6 +493,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should fail with case-sensitive password",
 						input: &input{
+							uid:      Users[0].Id,
 							username: "testuser1",
 							password: "PASSWORD123",
 						},
@@ -465,6 +505,7 @@ func TestUserLogin(t *testing.T) {
 					{
 						name: "Should fail when account is disabled",
 						input: &input{
+							uid:      Users[2].Id,
 							username: "disableduser",
 							password: "password123",
 						},

@@ -2,11 +2,13 @@ package user_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
@@ -26,13 +28,14 @@ func NewTestHelper(pool *pgxpool.Pool) *TestHelper {
 
 // DataUser represents a user fixture for testing
 type DataUser struct {
-	Idx      int // Index in the fixture array
-	Id       int // Actual database ID (populated after insert)
-	Username string
-	Email    string
-	FullName string
-	Password string // Plain text password for testing
-	Status   user.UserStatus
+	Idx         int // Index in the fixture array
+	Id          int // Actual database ID (populated after insert)
+	Username    string
+	Email       string
+	FullName    string
+	Password    string // Plain text password for testing
+	Status      user.UserStatus
+	LastLoginAt *time.Time // Pre-existing last login (nil = never logged in)
 }
 
 // InsertUser inserts a single user and returns it
@@ -336,11 +339,20 @@ func (h *TestHelper) GetUserTokenVersion(ctx context.Context, t *testing.T, user
 	return version
 }
 
+// SetLastLoginAt writes last_login_at directly, simulating a previous login.
+func (h *TestHelper) SetLastLoginAt(ctx context.Context, t *testing.T, id int, at time.Time) {
+	_, err := h.pool.Exec(ctx, "UPDATE users SET last_login_at = $1 WHERE id = $2", at, id)
+	assert.Nil(t, err)
+}
+
 // GetLastLoginAt reads the persisted last_login_at for a user. It returns nil
-// when the column is still NULL (e.g. the user has never logged in).
+// when the column is still NULL (e.g. the user has never logged in) or when
+// the user does not exist.
 func (h *TestHelper) GetLastLoginAt(ctx context.Context, t *testing.T, id int) *time.Time {
 	var lastLoginAt *time.Time
 	err := h.pool.QueryRow(ctx, "SELECT last_login_at FROM users WHERE id = $1", id).Scan(&lastLoginAt)
-	assert.Nil(t, err)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		assert.Nil(t, err)
+	}
 	return lastLoginAt
 }

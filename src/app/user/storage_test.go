@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -385,7 +386,7 @@ func TestStorageUpdateLastLogin(t *testing.T) {
 
 				tx, err := app.Storage.BeginTx(ctx)
 				assert.Nil(t, err)
-				assert.Nil(t, tx.UpdateLastLogin(ctx, u.Id))
+				assert.Nil(t, tx.UpdateLastLogin(ctx, u.Id, clock.Now().UTC()))
 				// Uncommitted change is not visible outside the transaction.
 				assert.Nil(t, app.Helper.GetLastLoginAt(ctx, t, u.Id))
 				assert.Nil(t, tx.Commit())
@@ -396,7 +397,7 @@ func TestStorageUpdateLastLogin(t *testing.T) {
 				// A second call advances the timestamp within a new transaction.
 				tx2, err := app.Storage.BeginTx(ctx)
 				assert.Nil(t, err)
-				assert.Nil(t, tx2.UpdateLastLogin(ctx, u.Id))
+				assert.Nil(t, tx2.UpdateLastLogin(ctx, u.Id, clock.Now().UTC()))
 				assert.Nil(t, tx2.Commit())
 				stamped2 := app.Helper.GetLastLoginAt(ctx, t, u.Id)
 				assert.NotNil(t, stamped2)

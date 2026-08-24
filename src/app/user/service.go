@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 )
 
 // Compile-time check to ensure service implements Service interface
@@ -46,6 +47,7 @@ type service struct {
 	permissionService permission.Service
 	throttle          LoginThrottleConfig
 	jwtService        *JWTService
+	clockSource       clock.Source
 }
 
 const (
@@ -60,15 +62,20 @@ const (
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
 // server-side.
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService) Service {
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
+	}
+	var cs clock.Source = clock.Real()
+	if len(clockSource) > 0 && clockSource[0] != nil {
+		cs = clockSource[0]
 	}
 	return &service{
 		storage:           storage,
 		permissionService: permissionService,
 		throttle:          throttle,
 		jwtService:        jwtService,
+		clockSource:       cs,
 	}
 }
 
@@ -87,7 +94,7 @@ func (s *service) issueTokenPair(ctx context.Context, db StorageTx, tokenVersion
 		return "", "", fmt.Errorf("generate refresh token: %w", err)
 	}
 
-	expiresAt := time.Now().Add(s.jwtService.RefreshExpiration())
+	expiresAt := s.clockSource.Now().Add(s.jwtService.RefreshExpiration())
 	if err := db.InsertRefreshToken(ctx, user.Id, s.jwtService.HashRefreshToken(refreshToken), tokenVersion, expiresAt); err != nil {
 		return "", "", fmt.Errorf("persist refresh token: %w", err)
 	}
@@ -304,7 +311,7 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
-	now := time.Now().UTC()
+	now := s.clockSource.Now().UTC()
 
 	// Reject while locked without comparing the password or counting the
 	// attempt: brute-force attempts must not burn CPU or extend the lock.
@@ -381,7 +388,8 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 
 	// Stamp last login for audit/traceability. Runs in the same transaction as
 	// the login so it commits atomically with the issued token.
-	if err := db.UpdateLastLogin(ctx, user.Id); err != nil {
+	lastLogin := s.clockSource.Now().UTC()
+	if err := db.UpdateLastLogin(ctx, user.Id, lastLogin); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update last login")
 		resp.Message = "Failed to login"
 		resp.ErrorCode = ErrorCodeInternal
@@ -426,7 +434,6 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	resp.User = user
 	// Reflect the just-stamped login time on the returned user so callers
 	// (and tests) see it without a second lookup.
-	lastLogin := time.Now().UTC()
 	resp.User.LastLoginAt = &lastLogin
 
 	return resp
@@ -509,7 +516,7 @@ func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutp
 		return resp
 	}
 
-	if time.Now().After(rt.ExpiresAt) {
+	if s.clockSource.Now().After(rt.ExpiresAt) {
 		log.Info().
 			Str("traceId", input.TraceId).
 			Int("refreshTokenId", rt.Id).
