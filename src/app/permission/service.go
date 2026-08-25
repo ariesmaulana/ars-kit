@@ -100,6 +100,19 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	}
 	defer db.Rollback()
 
+	// FIX: we should using lock for this kind of operation, to avoid when some parallel request delete the permission
+	known, err := db.PermissionExists(ctx, input.Permission)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission catalog")
+		resp.Message = "Failed to grant permission"
+		return resp
+	}
+	if !known {
+		log.Warn().Str("permission", input.Permission).Str("traceId", input.TraceId).Msg("Unknown permission")
+		resp.Message = "Unknown permission"
+		return resp
+	}
+
 	err = db.AddPermission(ctx, input.UserID, key(input.UserID, input.Permission))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to grant permission")

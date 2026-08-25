@@ -55,6 +55,18 @@ func (st *storageTx) HasPermission(ctx context.Context, userID int, permission s
 	return exists, nil
 }
 
+func (st *storageTx) PermissionExists(ctx context.Context, permission string) (bool, error) {
+	var exists bool
+	err := st.tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM permissions WHERE permission = $1)`,
+		permission,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check permission catalog: %w", err)
+	}
+	return exists, nil
+}
+
 func (st *storageTx) RemovePermission(ctx context.Context, userID int, permission string) error {
 	_, err := st.tx.Exec(ctx,
 		`DELETE FROM user_permissions WHERE user_id = $1 AND permission = $2`,
