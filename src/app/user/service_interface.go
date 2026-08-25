@@ -51,13 +51,21 @@ type Service interface {
 	// GetProfileById retrieves a user profile by ID
 	GetProfileById(ctx context.Context, input *GetProfileByIdInput) *GetProfileByIdOutput
 
-	// GrantPermission assigns a permission to a target user.
-	// Only a user holding the "<actorId>:super_user" permission may do this.
-	GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput
+	// AssignRole assigns a role to a target user (admin).
+	// Only a user holding super_user may do this.
+	AssignRole(ctx context.Context, input *AssignRoleInput) *AssignRoleOutput
 
-	// RevokePermission removes a permission from a target user.
-	// Only a user holding the "<actorId>:super_user" permission may do this.
-	RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput
+	// UnassignRole removes a role from a target user (admin).
+	// Only a user holding super_user may do this.
+	UnassignRole(ctx context.Context, input *UnassignRoleInput) *UnassignRoleOutput
+
+	// AssignPermissionToRole adds a permission to a role's meaning (admin).
+	// Only a user holding super_user may do this.
+	AssignPermissionToRole(ctx context.Context, input *AssignPermissionToRoleInput) *AssignPermissionToRoleOutput
+
+	// RemovePermissionFromRole removes a permission from a role's meaning (admin).
+	// Only a user holding super_user may do this.
+	RemovePermissionFromRole(ctx context.Context, input *RemovePermissionFromRoleInput) *RemovePermissionFromRoleOutput
 
 	// ListUsers lists users (admin). Requires the super_user permission.
 	ListUsers(ctx context.Context, input *ListUsersInput) *ListUsersOutput
@@ -288,32 +296,64 @@ type DeleteUserOutput struct {
 	ErrorCode ErrorCode
 }
 
-// GrantPermissionInput represents input for assigning a permission to a user.
-type GrantPermissionInput struct {
+// AssignRoleInput represents input for assigning a role to a user.
+type AssignRoleInput struct {
 	TraceId      string
-	ActorId      int // Must hold the "<actorId>:super_user" permission
+	ActorId      int // Must hold super_user
 	TargetUserId int
-	Permission   string // e.g. "user:profile_update" or "super_user"
+	RoleName     string // e.g. "member"; bootstrap-only roles are refused
 }
 
-// GrantPermissionOutput represents output after assigning a permission.
-type GrantPermissionOutput struct {
+// AssignRoleOutput represents output after assigning a role.
+type AssignRoleOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
 }
 
-// RevokePermissionInput represents input for removing a permission from a user.
-type RevokePermissionInput struct {
+// UnassignRoleInput represents input for removing a role from a user.
+type UnassignRoleInput struct {
 	TraceId      string
-	ActorId      int // Must hold the "<actorId>:super_user" permission
+	ActorId      int // Must hold super_user
 	TargetUserId int
-	Permission   string
+	RoleName     string
 }
 
-// RevokePermissionOutput represents output after removing a permission.
-type RevokePermissionOutput struct {
+// UnassignRoleOutput represents output after removing a role.
+type UnassignRoleOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// AssignPermissionToRoleInput represents input for adding a permission to a role.
+type AssignPermissionToRoleInput struct {
+	TraceId    string
+	ActorId    int // Must hold super_user
+	RoleName   string
+	Permission string
+}
+
+// AssignPermissionToRoleOutput represents output after the change.
+type AssignPermissionToRoleOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// RemovePermissionFromRoleInput represents input for removing a permission from a role.
+type RemovePermissionFromRoleInput struct {
+	TraceId    string
+	ActorId    int // Must hold super_user
+	RoleName   string
+	Permission string
+}
+
+// RemovePermissionFromRoleOutput represents output after the change.
+type RemovePermissionFromRoleOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string

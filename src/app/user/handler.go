@@ -104,8 +104,10 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
 	protected.PUT("/profile/password", h.UpdatePassword)
-	protected.POST("/permissions/grant", h.GrantPermission)
-	protected.POST("/permissions/revoke", h.RevokePermission)
+	protected.POST("/roles/assign", h.AssignRole)
+	protected.POST("/roles/unassign", h.UnassignRole)
+	protected.POST("/roles/permissions/grant", h.AssignPermissionToRole)
+	protected.POST("/roles/permissions/revoke", h.RemovePermissionFromRole)
 
 	// Admin routes (super_user-gated inside the service)
 	protected.GET("", h.ListUsers)
@@ -610,121 +612,239 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	})
 }
 
-// ManagePermissionRequest represents the HTTP request body for granting/revoking a permission
-type ManagePermissionRequest struct {
+// ManageRoleRequest represents the HTTP request body for assigning/unassigning a role
+type ManageRoleRequest struct {
 	TargetUserId int    `json:"user_id" validate:"required"`
-	Permission   string `json:"permission" validate:"required"`
+	RoleName     string `json:"role" validate:"required"`
 }
 
-// ManagePermissionResponse represents the HTTP response for granting/revoking a permission
-type ManagePermissionResponse struct {
+// ManageRoleResponse represents the HTTP response for assigning/unassigning a role
+type ManageRoleResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// GrantPermission handles POST /api/v1/users/permissions/grant
-// @Summary Grant permission
-// @Description Grant a permission string to a target user. Only super user may do this.
+// AssignRole handles POST /api/v1/users/roles/assign
+// @Summary Assign role
+// @Description Assign a role to a target user. Only super user may do this.
+// @Description Bootstrap-only roles (super_user) are refused.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param permission body ManagePermissionRequest true "Permission grant data"
-// @Success 200 {object} ManagePermissionResponse
-// @Failure 400 {object} ManagePermissionResponse
-// @Failure 401 {object} ManagePermissionResponse
-// @Failure 403 {object} ManagePermissionResponse
-// @Failure 500 {object} ManagePermissionResponse
-// @Router /api/v1/users/permissions/grant [post]
-func (h *Handler) GrantPermission(c echo.Context) error {
+// @Param role body ManageRoleRequest true "Role assignment data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/assign [post]
+func (h *Handler) AssignRole(c echo.Context) error {
 	traceID := xid.New().String()
 
 	actorID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
 	}
 
-	var req ManagePermissionRequest
+	var req ManageRoleRequest
 	if err := bindJSON(c, &req); err != nil {
 		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
 	}
 
-	output := h.service.GrantPermission(c.Request().Context(), &GrantPermissionInput{
+	output := h.service.AssignRole(c.Request().Context(), &AssignRoleInput{
 		TraceId:      traceID,
 		ActorId:      actorID,
 		TargetUserId: req.TargetUserId,
-		Permission:   req.Permission,
+		RoleName:     req.RoleName,
 	})
 
 	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	return c.JSON(http.StatusOK, ManagePermissionResponse{
+	return c.JSON(http.StatusOK, ManageRoleResponse{
 		Success: true,
 		Message: output.Message,
 	})
 }
 
-// RevokePermission handles POST /api/v1/users/permissions/revoke
-// @Summary Revoke permission
-// @Description Revoke a permission from a target user. Only superuser may do this.
+// UnassignRole handles POST /api/v1/users/roles/unassign
+// @Summary Unassign role
+// @Description Remove a role from a target user. Only super user may do this.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body ManagePermissionRequest true "Permission revoke data"
-// @Success 200 {object} ManagePermissionResponse
-// @Failure 400 {object} ManagePermissionResponse
-// @Failure 401 {object} ManagePermissionResponse
-// @Failure 403 {object} ManagePermissionResponse
-// @Failure 500 {object} ManagePermissionResponse
-// @Router /api/v1/users/permissions/revoke [post]
-func (h *Handler) RevokePermission(c echo.Context) error {
+// @Param body body ManageRoleRequest true "Role removal data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/unassign [post]
+func (h *Handler) UnassignRole(c echo.Context) error {
 	traceID := xid.New().String()
 
 	actorID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
 	}
 
-	var req ManagePermissionRequest
+	var req ManageRoleRequest
 	if err := bindJSON(c, &req); err != nil {
 		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
 	}
 
-	output := h.service.RevokePermission(c.Request().Context(), &RevokePermissionInput{
+	output := h.service.UnassignRole(c.Request().Context(), &UnassignRoleInput{
 		TraceId:      traceID,
 		ActorId:      actorID,
 		TargetUserId: req.TargetUserId,
-		Permission:   req.Permission,
+		RoleName:     req.RoleName,
 	})
 
 	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	return c.JSON(http.StatusOK, ManagePermissionResponse{
+	return c.JSON(http.StatusOK, ManageRoleResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// ManageRolePermissionRequest represents the HTTP request body for
+// granting/revoking a permission on a role.
+type ManageRolePermissionRequest struct {
+	RoleName   string `json:"role" validate:"required"`
+	Permission string `json:"permission" validate:"required"`
+}
+
+// AssignPermissionToRole handles POST /api/v1/users/roles/permissions/grant
+// @Summary Grant a permission to a role
+// @Description Add a catalog-registered permission to a role. Only super user
+// @Description may do this; the super_user role cannot be modified.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ManageRolePermissionRequest true "Role permission grant data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/permissions/grant [post]
+func (h *Handler) AssignPermissionToRole(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req ManageRolePermissionRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.AssignPermissionToRole(c.Request().Context(), &AssignPermissionToRoleInput{
+		TraceId:    traceID,
+		ActorId:    actorID,
+		RoleName:   req.RoleName,
+		Permission: req.Permission,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ManageRoleResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// RemovePermissionFromRole handles POST /api/v1/users/roles/permissions/revoke
+// @Summary Revoke a permission from a role
+// @Description Remove a permission from a role. Only super user may do this;
+// @Description the super_user role cannot be modified.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ManageRolePermissionRequest true "Role permission revoke data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/permissions/revoke [post]
+func (h *Handler) RemovePermissionFromRole(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req ManageRolePermissionRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.RemovePermissionFromRole(c.Request().Context(), &RemovePermissionFromRoleInput{
+		TraceId:    traceID,
+		ActorId:    actorID,
+		RoleName:   req.RoleName,
+		Permission: req.Permission,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ManageRoleResponse{
 		Success: true,
 		Message: output.Message,
 	})

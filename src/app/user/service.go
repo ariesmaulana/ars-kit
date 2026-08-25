@@ -1152,10 +1152,11 @@ func (s *service) DeleteUser(ctx context.Context, input *DeleteUserInput) *Delet
 	return resp
 }
 
-// GrantPermission assigns a permission to a target user.
-// Only an actor holding the "<actorId>:super_user" permission may do this.
-func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput {
-	resp := &GrantPermissionOutput{TraceId: input.TraceId}
+// AssignRole assigns a role to a target user.
+// Only an actor holding super_user may do this. Bootstrap-only roles
+// (super_user itself) are refused by the permission service (P0-13).
+func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *AssignRoleOutput {
+	resp := &AssignRoleOutput{TraceId: input.TraceId}
 
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
@@ -1175,9 +1176,9 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.Permission == "" {
-		log.Warn().Msg("Permission empty")
-		resp.Message = "Permission is mandatory"
+	if input.RoleName == "" {
+		log.Warn().Msg("Role name empty")
+		resp.Message = "Role name is mandatory"
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -1188,11 +1189,11 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		return resp
 	}
 
-	output := s.permissionService.GrantPermission(ctx, &permission.GrantPermissionInput{
-		TraceId:    input.TraceId,
-		UserID:     input.TargetUserId,
-		Permission: input.Permission,
-		ActorId:    input.ActorId,
+	output := s.permissionService.AssignRole(ctx, &permission.AssignRoleInput{
+		TraceId:  input.TraceId,
+		UserID:   input.TargetUserId,
+		RoleName: input.RoleName,
+		ActorId:  input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
@@ -1201,14 +1202,14 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 	}
 
 	resp.Success = true
-	resp.Message = "Permission granted successfully"
+	resp.Message = "Role assigned successfully"
 	return resp
 }
 
-// RevokePermission removes a permission from a target user.
-// Only the *holding the <actorId>:super_user permission may do this.
-func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput {
-	resp := &RevokePermissionOutput{TraceId: input.TraceId}
+// UnassignRole removes a role from a target user.
+// Only an actor holding super_user may do this.
+func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *UnassignRoleOutput {
+	resp := &UnassignRoleOutput{TraceId: input.TraceId}
 
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
@@ -1228,9 +1229,9 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.Permission == "" {
-		log.Warn().Msg("Permission empty")
-		resp.Message = "Permission is mandatory"
+	if input.RoleName == "" {
+		log.Warn().Msg("Role name empty")
+		resp.Message = "Role name is mandatory"
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -1241,11 +1242,11 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		return resp
 	}
 
-	output := s.permissionService.RevokePermission(ctx, &permission.RevokePermissionInput{
-		TraceId:    input.TraceId,
-		UserID:     input.TargetUserId,
-		Permission: input.Permission,
-		ActorId:    input.ActorId,
+	output := s.permissionService.UnassignRole(ctx, &permission.UnassignRoleInput{
+		TraceId:  input.TraceId,
+		UserID:   input.TargetUserId,
+		RoleName: input.RoleName,
+		ActorId:  input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
@@ -1254,7 +1255,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	}
 
 	resp.Success = true
-	resp.Message = "Permission revoked successfully"
+	resp.Message = "Role unassigned successfully"
 	return resp
 }
 
@@ -1368,4 +1369,93 @@ func (s *service) UpdateUserStatus(ctx context.Context, input *UpdateUserStatusI
 	resp.Success = true
 	resp.Message = "User status updated successfully"
 	return resp
+}
+
+// AssignPermissionToRole adds a permission to a role's meaning. Only an
+// actor holding super_user may do this; the permission module enforces the
+// catalog and refuses to touch the super_user role.
+func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermissionToRoleInput) *AssignPermissionToRoleOutput {
+	resp := &AssignPermissionToRoleOutput{TraceId: input.TraceId}
+
+	if msg := s.validateRolePermissionInput(input.TraceId, input.ActorId, input.RoleName, input.Permission); msg != "" {
+		log.Warn().Msg(msg)
+		resp.Message = msg
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can manage role permissions"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	output := s.permissionService.AssignPermissionToRole(ctx, &permission.AssignPermissionToRoleInput{
+		TraceId:    input.TraceId,
+		RoleName:   input.RoleName,
+		Permission: input.Permission,
+		ActorId:    input.ActorId,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = output.Message
+	return resp
+}
+
+// RemovePermissionFromRole removes a permission from a role's meaning.
+// Same gating and rules as AssignPermissionToRole.
+func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePermissionFromRoleInput) *RemovePermissionFromRoleOutput {
+	resp := &RemovePermissionFromRoleOutput{TraceId: input.TraceId}
+
+	if msg := s.validateRolePermissionInput(input.TraceId, input.ActorId, input.RoleName, input.Permission); msg != "" {
+		log.Warn().Msg(msg)
+		resp.Message = msg
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can manage role permissions"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	output := s.permissionService.RemovePermissionFromRole(ctx, &permission.RemovePermissionFromRoleInput{
+		TraceId:    input.TraceId,
+		RoleName:   input.RoleName,
+		Permission: input.Permission,
+		ActorId:    input.ActorId,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = output.Message
+	return resp
+}
+
+// validateRolePermissionInput returns the first validation error message for
+// the role-permission management inputs, or "" when the input is valid.
+func (s *service) validateRolePermissionInput(traceId string, actorId int, roleName string, perm string) string {
+	if traceId == "" {
+		return "TraceId is mandatory"
+	}
+	if actorId == 0 {
+		return "Actor ID is mandatory"
+	}
+	if roleName == "" {
+		return "Role name is mandatory"
+	}
+	if perm == "" {
+		return "Permission is mandatory"
+	}
+	return ""
 }

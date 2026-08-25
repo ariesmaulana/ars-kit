@@ -17,28 +17,43 @@ func NewTestHelper(pool *pgxpool.Pool) *TestHelper {
 	return &TestHelper{pool: pool}
 }
 
-func (h *TestHelper) AddPermission(ctx context.Context, t *testing.T, userID int, permission string) {
+// AddRole inserts a role, simulating the SOP step of registering a role.
+func (h *TestHelper) AddRole(ctx context.Context, t *testing.T, roleName string) {
 	_, err := h.pool.Exec(ctx,
-		`INSERT INTO user_permissions (user_id, permission) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-		userID, permission,
+		`INSERT INTO roles (name) VALUES ($1) ON CONFLICT DO NOTHING`,
+		roleName,
+	)
+	assert.Nil(t, err)
+}
+
+// AddRolePermission grants a permission to a role, simulating the SOP step
+// of defining what a role means.
+func (h *TestHelper) AddRolePermission(ctx context.Context, t *testing.T, roleName string, permission string) {
+	_, err := h.pool.Exec(ctx,
+		`INSERT INTO role_permissions (role_id, permission)
+		 SELECT r.id, $2 FROM roles r WHERE r.name = $1
+		 ON CONFLICT DO NOTHING`,
+		roleName, permission,
 	)
 	assert.Nil(t, err)
 }
 
 // AddKnownPermission inserts a row into the permissions catalog, simulating
 // the SOP step of registering a new feature's permission.
-func (h *TestHelper) AddKnownPermission(ctx context.Context, t *testing.T, permission string) {
+func (h *TestHelper) AddKnownPermission(ctx context.Context, t *testing.T, perm string) {
 	_, err := h.pool.Exec(ctx,
 		`INSERT INTO permissions (permission) VALUES ($1) ON CONFLICT DO NOTHING`,
-		permission,
+		perm,
 	)
 	assert.Nil(t, err)
 }
 
-func (h *TestHelper) GetAllPermissions(ctx context.Context, t *testing.T, userID int) []string {
+// GetRolePermissions returns the permissions carried by a role, ordered.
+func (h *TestHelper) GetRolePermissions(ctx context.Context, t *testing.T, roleName string) []string {
 	rows, err := h.pool.Query(ctx,
-		`SELECT permission FROM user_permissions WHERE user_id = $1 ORDER BY permission`,
-		userID,
+		`SELECT rp.permission FROM role_permissions rp JOIN roles r ON r.id = rp.role_id
+		 WHERE r.name = $1 ORDER BY rp.permission`,
+		roleName,
 	)
 	assert.Nil(t, err)
 	defer rows.Close()
@@ -52,6 +67,39 @@ func (h *TestHelper) GetAllPermissions(ctx context.Context, t *testing.T, userID
 	}
 	assert.Nil(t, rows.Err())
 	return perms
+}
+
+// SetUserRole assigns a role to a user directly, simulating a bootstrap /
+// SOP grant outside the service layer.
+func (h *TestHelper) SetUserRole(ctx context.Context, t *testing.T, userID int, roleName string) {
+	_, err := h.pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id)
+		 SELECT $1, r.id FROM roles r WHERE r.name = $2
+		 ON CONFLICT DO NOTHING`,
+		userID, roleName,
+	)
+	assert.Nil(t, err)
+}
+
+// GetUserRoles returns the role names held by a user, ordered by name.
+func (h *TestHelper) GetUserRoles(ctx context.Context, t *testing.T, userID int) []string {
+	rows, err := h.pool.Query(ctx,
+		`SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+		 WHERE ur.user_id = $1 ORDER BY r.name`,
+		userID,
+	)
+	assert.Nil(t, err)
+	defer rows.Close()
+
+	var roles []string
+	for rows.Next() {
+		var name string
+		err := rows.Scan(&name)
+		assert.Nil(t, err)
+		roles = append(roles, name)
+	}
+	assert.Nil(t, rows.Err())
+	return roles
 }
 
 // GetPermissionAudit returns all audit rows recorded against a target user,
@@ -75,18 +123,7 @@ func (h *TestHelper) GetPermissionAudit(ctx context.Context, t *testing.T, targe
 	return audits
 }
 
-func (h *TestHelper) ClearPermissions(ctx context.Context, t *testing.T) {
-	_, err := h.pool.Exec(ctx, `DELETE FROM user_permissions`)
-	assert.Nil(t, err)
-}
-
 type DataUser struct {
 	Idx int
 	ID  int
-}
-
-// DataPermission represents a permission catalog fixture for testing
-type DataPermission struct {
-	Idx        int // Index in the fixture array
-	Permission string
 }
