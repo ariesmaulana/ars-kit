@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ariesmaulana/ars-kit/src/app/user"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,6 +90,59 @@ func TestStorageDeleteUser(t *testing.T) {
 				defer tx.Rollback()
 				// Exec-based delete is idempotent: missing row is not an error.
 				assert.NoError(t, tx.DeleteUser(ctx, 999999))
+			})
+		})
+	})
+}
+
+func TestStorageUpdateUserStatus(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage UpdateUserStatus", func() {
+
+			suite.Runs(t, "Should persist the new status within a committed transaction", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "statuschange", "status@example.com", "Status", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				require.NoError(t, err)
+
+				err = tx.UpdateUserStatus(ctx, int(u.Id), user.UserStatusSuspended)
+				require.NoError(t, err)
+				require.NoError(t, tx.Commit())
+
+				got := app.Helper.GetUserById(ctx, t, int(u.Id))
+				require.NotNil(t, got)
+				assert.Equal(t, user.UserStatusSuspended, got.Status)
+			})
+
+			suite.Runs(t, "Should not persist when the transaction is rolled back", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "rollbackstatus", "rollback@example.com", "Rollback", "password123")
+
+				tx, err := app.Storage.BeginTx(ctx)
+				require.NoError(t, err)
+
+				err = tx.UpdateUserStatus(ctx, int(u.Id), user.UserStatusDisabled)
+				require.NoError(t, err)
+				require.NoError(t, tx.Rollback())
+
+				got := app.Helper.GetUserById(ctx, t, int(u.Id))
+				require.NotNil(t, got)
+				assert.Equal(t, user.UserStatusActive, got.Status)
+			})
+
+			suite.Runs(t, "Should be a no-op (no error) when user does not exist", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				tx, err := app.Storage.BeginTx(ctx)
+				require.NoError(t, err)
+				defer tx.Rollback()
+				assert.NoError(t, tx.UpdateUserStatus(ctx, 999999, user.UserStatusSuspended))
 			})
 		})
 	})

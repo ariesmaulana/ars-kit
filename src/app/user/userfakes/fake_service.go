@@ -178,6 +178,18 @@ type ServiceFake struct {
 	updatePasswordReturnsOnCall map[int]struct {
 		result1 *user.UpdatePasswordOutput
 	}
+	UpdateUserStatusStub        func(context.Context, *user.UpdateUserStatusInput) *user.UpdateUserStatusOutput
+	updateUserStatusMutex       sync.RWMutex
+	updateUserStatusArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.UpdateUserStatusInput
+	}
+	updateUserStatusReturns struct {
+		result1 *user.UpdateUserStatusOutput
+	}
+	updateUserStatusReturnsOnCall map[int]struct {
+		result1 *user.UpdateUserStatusOutput
+	}
 	UpdateUsernameStub        func(context.Context, *user.UpdateUsernameInput) *user.UpdateUsernameOutput
 	updateUsernameMutex       sync.RWMutex
 	updateUsernameArgsForCall []struct {
@@ -1062,6 +1074,68 @@ func (fake *ServiceFake) UpdatePasswordReturnsOnCall(i int, result1 *user.Update
 	}{result1}
 }
 
+func (fake *ServiceFake) UpdateUserStatus(arg1 context.Context, arg2 *user.UpdateUserStatusInput) *user.UpdateUserStatusOutput {
+	fake.updateUserStatusMutex.Lock()
+	ret, specificReturn := fake.updateUserStatusReturnsOnCall[len(fake.updateUserStatusArgsForCall)]
+	fake.updateUserStatusArgsForCall = append(fake.updateUserStatusArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.UpdateUserStatusInput
+	}{arg1, arg2})
+	stub := fake.UpdateUserStatusStub
+	fakeReturns := fake.updateUserStatusReturns
+	fake.recordInvocation("UpdateUserStatus", []interface{}{arg1, arg2})
+	fake.updateUserStatusMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) UpdateUserStatusCallCount() int {
+	fake.updateUserStatusMutex.RLock()
+	defer fake.updateUserStatusMutex.RUnlock()
+	return len(fake.updateUserStatusArgsForCall)
+}
+
+func (fake *ServiceFake) UpdateUserStatusCalls(stub func(context.Context, *user.UpdateUserStatusInput) *user.UpdateUserStatusOutput) {
+	fake.updateUserStatusMutex.Lock()
+	defer fake.updateUserStatusMutex.Unlock()
+	fake.UpdateUserStatusStub = stub
+}
+
+func (fake *ServiceFake) UpdateUserStatusArgsForCall(i int) (context.Context, *user.UpdateUserStatusInput) {
+	fake.updateUserStatusMutex.RLock()
+	defer fake.updateUserStatusMutex.RUnlock()
+	argsForCall := fake.updateUserStatusArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) UpdateUserStatusReturns(result1 *user.UpdateUserStatusOutput) {
+	fake.updateUserStatusMutex.Lock()
+	defer fake.updateUserStatusMutex.Unlock()
+	fake.UpdateUserStatusStub = nil
+	fake.updateUserStatusReturns = struct {
+		result1 *user.UpdateUserStatusOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UpdateUserStatusReturnsOnCall(i int, result1 *user.UpdateUserStatusOutput) {
+	fake.updateUserStatusMutex.Lock()
+	defer fake.updateUserStatusMutex.Unlock()
+	fake.UpdateUserStatusStub = nil
+	if fake.updateUserStatusReturnsOnCall == nil {
+		fake.updateUserStatusReturnsOnCall = make(map[int]struct {
+			result1 *user.UpdateUserStatusOutput
+		})
+	}
+	fake.updateUserStatusReturnsOnCall[i] = struct {
+		result1 *user.UpdateUserStatusOutput
+	}{result1}
+}
+
 func (fake *ServiceFake) UpdateUsername(arg1 context.Context, arg2 *user.UpdateUsernameInput) *user.UpdateUsernameOutput {
 	fake.updateUsernameMutex.Lock()
 	ret, specificReturn := fake.updateUsernameReturnsOnCall[len(fake.updateUsernameArgsForCall)]
@@ -1127,6 +1201,38 @@ func (fake *ServiceFake) UpdateUsernameReturnsOnCall(i int, result1 *user.Update
 func (fake *ServiceFake) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
+	fake.deleteUserMutex.RLock()
+	defer fake.deleteUserMutex.RUnlock()
+	fake.demoWorkflowMutex.RLock()
+	defer fake.demoWorkflowMutex.RUnlock()
+	fake.getProfileByIdMutex.RLock()
+	defer fake.getProfileByIdMutex.RUnlock()
+	fake.getUserMutex.RLock()
+	defer fake.getUserMutex.RUnlock()
+	fake.grantPermissionMutex.RLock()
+	defer fake.grantPermissionMutex.RUnlock()
+	fake.grantPermissionSystemMutex.RLock()
+	defer fake.grantPermissionSystemMutex.RUnlock()
+	fake.listUsersMutex.RLock()
+	defer fake.listUsersMutex.RUnlock()
+	fake.loginMutex.RLock()
+	defer fake.loginMutex.RUnlock()
+	fake.logoutMutex.RLock()
+	defer fake.logoutMutex.RUnlock()
+	fake.refreshMutex.RLock()
+	defer fake.refreshMutex.RUnlock()
+	fake.registerMutex.RLock()
+	defer fake.registerMutex.RUnlock()
+	fake.registerUserMutex.RLock()
+	defer fake.registerUserMutex.RUnlock()
+	fake.revokePermissionMutex.RLock()
+	defer fake.revokePermissionMutex.RUnlock()
+	fake.updatePasswordMutex.RLock()
+	defer fake.updatePasswordMutex.RUnlock()
+	fake.updateUserStatusMutex.RLock()
+	defer fake.updateUserStatusMutex.RUnlock()
+	fake.updateUsernameMutex.RLock()
+	defer fake.updateUsernameMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

@@ -368,6 +368,15 @@ func (st *storageTx) UpdateLastLogin(ctx context.Context, id int, at time.Time) 
 	return nil
 }
 
+func (st *storageTx) UpdateUserStatus(ctx context.Context, id int, status UserStatus) error {
+	query := `UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id, status)
+	if err != nil {
+		return fmt.Errorf("failed to update user status: %w", err)
+	}
+	return nil
+}
+
 func (st *storageTx) DeleteUser(ctx context.Context, id int) error {
 	query := `DELETE FROM users WHERE id = $1`
 	_, err := st.tx.Exec(ctx, query, id)

@@ -110,6 +110,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	// Admin routes (super_user-gated inside the service)
 	protected.GET("", h.ListUsers)
 	protected.GET("/:id", h.GetUser)
+	protected.PUT("/:id/status", h.UpdateUserStatus)
 	protected.DELETE("/:id", h.DeleteUser)
 }
 
@@ -144,6 +145,12 @@ type UpdateUsernameRequest struct {
 type UpdatePasswordRequest struct {
 	OldPassword string `json:"old_password" validate:"required"`
 	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+
+// UpdateUserStatusRequest represents the HTTP request body for setting a
+// user's status. Values: "active", "disabled", "suspended".
+type UpdateUserStatusRequest struct {
+	Status string `json:"status" validate:"required"`
 }
 
 // UserDTO represents a user in HTTP responses (without password)
@@ -729,6 +736,78 @@ type UserListResponse struct {
 	Message    string             `json:"message"`
 	Data       []UserDTO          `json:"data,omitempty"`
 	Pagination PaginationResponse `json:"pagination,omitempty"`
+}
+
+// UpdateUserStatus handles PUT /api/v1/users/:id/status
+// @Summary Update a user's status
+// @Description Set a user's status to active, disabled, or suspended. Requires
+// @Description the super_user permission. Disabling or suspending also revokes
+// @Description all the target's active refresh tokens.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Param body body UpdateUserStatusRequest true "New status"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 404 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id}/status [put]
+func (h *Handler) UpdateUserStatus(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	req := new(UpdateUserStatusRequest)
+	if err := bindJSON(c, req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+	if req.Status == "" {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Status is mandatory",
+		})
+	}
+
+	output := h.service.UpdateUserStatus(c.Request().Context(), &UpdateUserStatusInput{
+		TraceId:      traceID,
+		ActorId:      actorID,
+		TargetUserId: id,
+		Status:       UserStatus(req.Status),
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: output.Message,
+	})
 }
 
 // ListUsers handles GET /api/v1/users
