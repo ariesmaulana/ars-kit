@@ -1192,6 +1192,7 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		TraceId:    input.TraceId,
 		UserID:     input.TargetUserId,
 		Permission: input.Permission,
+		ActorId:    input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
@@ -1244,6 +1245,7 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		TraceId:    input.TraceId,
 		UserID:     input.TargetUserId,
 		Permission: input.Permission,
+		ActorId:    input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
