@@ -646,3 +646,282 @@ func TestUserDeleteUser(t *testing.T) {
 		})
 	})
 }
+
+func TestUserUpdateStatus(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User UpdateUserStatus", func() {
+
+			// ========== 1. Declare Fixture Variables ==========
+			var Users []DataUser
+
+			// ========== 2. Define Test Structures ==========
+			type input struct {
+				traceId string
+				actorId int
+				target  int
+				status  user.UserStatus
+			}
+			type expected struct {
+				success             bool
+				message             string
+				errorCode           user.ErrorCode
+				statusAfter         user.UserStatus
+				activeTokensRevoked bool // expect active refresh tokens to be revoked
+			}
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+			}
+
+			// ========== 3. Setup Fixtures ==========
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "admin1",
+						Email:    "admin1@example.com",
+						FullName: "Admin One",
+						Password: "password123",
+						Status:   user.UserStatusActive,
+					},
+					{
+						Idx:      1,
+						Username: "target1",
+						Email:    "target1@example.com",
+						FullName: "Target One",
+						Password: "password123",
+						Status:   user.UserStatusActive,
+					},
+				}
+
+				for i, userData := range Users {
+					inserted := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password, userData.Status)
+					Users[i].Id = inserted.Id
+				}
+			})
+
+			// ========== 4. Define Test Runner ==========
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.actorId, input.UserID, r.name)
+					assert.Equal(t, user.PermissionSuperUser, input.Permission, r.name)
+					return r.permissionCheck
+				}
+
+				// Seed an active refresh token for the target so revocation is observable.
+				if r.input.target != 0 && r.expected.activeTokensRevoked {
+					app.Helper.InsertActiveRefreshToken(ctx, t, r.input.target)
+				}
+
+				beforeActive := app.Helper.CountActiveRefreshTokens(ctx, t, r.input.target)
+
+				output := app.Service.UpdateUserStatus(ctx, &user.UpdateUserStatusInput{
+					TraceId:      r.input.traceId,
+					ActorId:      r.input.actorId,
+					TargetUserId: r.input.target,
+					Status:       r.input.status,
+				})
+
+				assert.Equal(t, r.expected.success, output.Success, r.name)
+				assert.Equal(t, r.expected.message, output.Message, r.name)
+				assert.Equal(t, r.expected.errorCode, output.ErrorCode, r.name)
+
+				if r.input.target == 0 || !r.permissionCheck.HasPermission {
+					return
+				}
+
+				got := app.Helper.GetUserById(ctx, t, r.input.target)
+				if got == nil {
+					return
+				}
+				assert.Equal(t, r.expected.statusAfter, got.Status, r.name)
+
+				if r.expected.activeTokensRevoked && beforeActive > 0 {
+					assert.Zero(t, app.Helper.CountActiveRefreshTokens(ctx, t, r.input.target), r.name)
+				}
+			}
+
+			// ========== 5. Define Rows Runner ==========
+			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			// ========== 6. Execute Test Scenarios ==========
+			suite.Run(t, "UpdateUserStatus scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				runRows(t, app, []*testRow{
+					// ===== Success Tests =====
+					{
+						name: "Should suspend a user successfully and revoke sessions",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:             true,
+							message:             "User status updated successfully",
+							statusAfter:         user.UserStatusSuspended,
+							activeTokensRevoked: true,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should disable a user successfully",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatusDisabled,
+						},
+						expected: &expected{
+							success:             true,
+							message:             "User status updated successfully",
+							statusAfter:         user.UserStatusDisabled,
+							activeTokensRevoked: true,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should reactivate a suspended user without revoking tokens",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatusActive,
+						},
+						expected: &expected{
+							success:             true,
+							message:             "User status updated successfully",
+							statusAfter:         user.UserStatusActive,
+							activeTokensRevoked: false,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+
+					// ===== Authorization Tests =====
+					{
+						name: "Should fail when actor lacks super user permission",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Unauthorized: only super user can update user status",
+							errorCode:   user.ErrorCodeForbidden,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: false},
+					},
+					{
+						name: "Should reject disabling own account",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[0].Id,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Cannot disable your own account",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+
+					// ===== Validation Tests =====
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							traceId: "",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:     false,
+							message:     "TraceId is mandatory",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when ActorId is empty",
+						input: &input{
+							traceId: "trace-test",
+							actorId: 0,
+							target:  Users[1].Id,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Actor ID is mandatory",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when TargetUserId is empty",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  0,
+							status:  user.UserStatusSuspended,
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Target user ID is mandatory",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when Status is empty",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  "",
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Status is mandatory",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when Status is not a known enum value",
+						input: &input{
+							traceId: "trace-test",
+							actorId: Users[0].Id,
+							target:  Users[1].Id,
+							status:  user.UserStatus("banned"),
+						},
+						expected: &expected{
+							success:     false,
+							message:     "Invalid status",
+							errorCode:   user.ErrorCodeValidation,
+							statusAfter: user.UserStatusActive,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+				})
+			})
+		})
+	})
+}

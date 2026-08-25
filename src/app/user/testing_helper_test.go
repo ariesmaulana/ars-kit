@@ -3,6 +3,7 @@ package user_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -309,6 +310,18 @@ func (h *TestHelper) CountRefreshTokens(ctx context.Context, t *testing.T, userI
 	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", userID).Scan(&count)
 	assert.Nil(t, err)
 	return count
+}
+
+// InsertActiveRefreshToken inserts one active (non-revoked) refresh token row
+// for a user so session-revocation behavior is observable in tests.
+func (h *TestHelper) InsertActiveRefreshToken(ctx context.Context, t *testing.T, userID int) {
+	// token_hash is globally UNIQUE and scenarios share one database.
+	hash := fmt.Sprintf("active-token-%d-%d", userID, time.Now().UnixNano())
+	_, err := h.pool.Exec(ctx,
+		`INSERT INTO refresh_tokens (user_id, token_hash, token_version, expires_at) VALUES ($1, $2, 1, NOW() + INTERVAL '24 hours')`,
+		userID, hash,
+	)
+	assert.Nil(t, err)
 }
 
 // CountActiveRefreshTokens returns the number of non-revoked refresh token rows

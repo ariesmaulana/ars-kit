@@ -1257,3 +1257,115 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	resp.Message = "Permission revoked successfully"
 	return resp
 }
+
+// UpdateUserStatus sets a target user's status (admin). Only an actor holding
+// the "<actorId>:super_user" permission may do this. Disabling or suspending
+// the target also revokes all their active refresh tokens in the same
+// transaction, so existing sessions die immediately. An actor cannot disable
+// or suspend their own account.
+func (s *service) UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput {
+	resp := &UpdateUserStatusOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.TargetUserId == 0 {
+		log.Warn().Msg("Target user ID empty")
+		resp.Message = "Target user ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Status == "" {
+		log.Warn().Msg("Status empty")
+		resp.Message = "Status is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	switch input.Status {
+	case UserStatusActive, UserStatusDisabled, UserStatusSuspended:
+		// known status
+	default:
+		log.Warn().Str("status", string(input.Status)).Msg("Unknown user status")
+		resp.Message = "Invalid status"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == input.TargetUserId && input.Status != UserStatusActive {
+		log.Warn().Int("actorId", input.ActorId).Msg("Actor attempted to disable own account")
+		resp.Message = "Cannot disable your own account"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can update user status"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	_, errType, err := db.LockUserById(ctx, input.TargetUserId)
+	if errType == ErrTypeNotFound {
+		log.Info().Str("traceId", input.TraceId).Int("id", input.TargetUserId).Msg("User not found")
+		resp.Message = "User not found"
+		resp.ErrorCode = ErrorCodeNotFound
+		return resp
+	}
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.UpdateUserStatus(ctx, input.TargetUserId, input.Status); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update user status")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// A non-active status must kill existing sessions immediately.
+	if input.Status != UserStatusActive {
+		if err := db.RevokeAllUserRefreshTokens(ctx, input.TargetUserId); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke refresh tokens")
+			resp.Message = "Failed to update user status"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Int("targetUserId", input.TargetUserId).
+		Str("status", string(input.Status)).
+		Msg("User status updated successfully")
+
+	resp.Success = true
+	resp.Message = "User status updated successfully"
+	return resp
+}

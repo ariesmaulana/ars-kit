@@ -67,6 +67,12 @@ type Service interface {
 
 	// DeleteUser hard-deletes a user (admin). Requires the super_user permission.
 	DeleteUser(ctx context.Context, input *DeleteUserInput) *DeleteUserOutput
+
+	// UpdateUserStatus sets a target user's status (active/disabled/suspended)
+	// (admin). Requires the super_user permission. Disabling or suspending a
+	// user also revokes all their active refresh tokens so existing sessions
+	// die immediately; an actor cannot disable/suspend their own account.
+	UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -308,6 +314,22 @@ type RevokePermissionInput struct {
 
 // RevokePermissionOutput represents output after removing a permission.
 type RevokePermissionOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// UpdateUserStatusInput represents input for setting a user's status.
+type UpdateUserStatusInput struct {
+	TraceId      string
+	ActorId      int // Must hold the "<actorId>:super_user" permission
+	TargetUserId int
+	Status       UserStatus // active | disabled | suspended
+}
+
+// UpdateUserStatusOutput represents output after setting a user's status.
+type UpdateUserStatusOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string

@@ -104,6 +104,11 @@ type StorageTx interface {
 	// revoked (cleanup when token_version is bumped).
 	RevokeAllUserRefreshTokens(ctx context.Context, userID int) error
 
+	// UpdateUserStatus sets a user's status (active/disabled/suspended) and
+	// bumps updated_at. Exec-based, so a missing id is not an error; callers
+	// should hold the row lock (LockUserById) first when existence matters.
+	UpdateUserStatus(ctx context.Context, id int, status UserStatus) error
+
 	// DeleteUser hard-deletes a user (GDPR erasure). Refresh tokens cascade
 	// via the foreign key. Callers should hold the row lock (LockUserById)
 	// first so a missing id is detected before the delete.
