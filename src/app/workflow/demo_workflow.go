@@ -43,11 +43,11 @@ type User struct {
 	ID int64
 }
 
-// GrantPermissionInput describes a permission grant.
+// GrantPermissionInput describes a role assignment.
 type GrantPermissionInput struct {
-	TraceId    string
-	UserID     int64
-	Permission string
+	TraceId  string
+	UserID   int64
+	RoleName string
 }
 
 // GrantPermissionOutput is the typed result of GrantPermissionSystem.
@@ -71,8 +71,9 @@ const (
 // Demo Workflow
 // ============================================================================
 
-// demoPermission is the permission granted by the second step.
-const demoPermission = "default"
+// demoRole is the role assigned by the second step. It carries the
+// 'default' permission, seeded by the permission module's migration.
+const demoRole = "member"
 
 // DemoWorkflow creates the workflow definition and injects the domain
 // services required by this workflow.
@@ -244,9 +245,9 @@ func (w *demoWorkflow) GrantPermission(
 	out := w.userService.GrantPermissionSystem(
 		ctx,
 		&GrantPermissionInput{
-			TraceId:    run.TraceID,
-			UserID:     payload.UserID,
-			Permission: demoPermission,
+			TraceId:  run.TraceID,
+			UserID:   payload.UserID,
+			RoleName: demoRole,
 		},
 	)
 	if !out.Success {

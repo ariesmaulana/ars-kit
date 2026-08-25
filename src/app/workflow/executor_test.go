@@ -120,7 +120,7 @@ func TestExecutorCompletesOnLastStep(t *testing.T) {
 	// Step 2 received the UserID persisted by step 1.
 	require.Len(t, userSvc.grantCalls, 1)
 	assert.Equal(t, int64(42), userSvc.grantCalls[0].UserID)
-	assert.Equal(t, "default", userSvc.grantCalls[0].Permission)
+	assert.Equal(t, "member", userSvc.grantCalls[0].RoleName)
 }
 
 func TestExecutorRetriesOnStepError(t *testing.T) {

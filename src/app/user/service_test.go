@@ -1216,8 +1216,7 @@ func TestUserGetProfileById(t *testing.T) {
 		})
 	})
 }
-
-func TestUserGrantPermission(t *testing.T) {
+func TestUserAssignRole(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
 		suite.Describe(t, "User GrantPermission", func() {
 
@@ -1227,7 +1226,7 @@ func TestUserGrantPermission(t *testing.T) {
 				traceId      string
 				actorId      int
 				targetUserId int
-				permission   string
+				roleName     string
 			}
 			type expected struct {
 				success           bool
@@ -1241,7 +1240,7 @@ func TestUserGrantPermission(t *testing.T) {
 				input           *input
 				expected        *expected
 				permissionCheck *permission.CheckPermissionOutput
-				grantOutput     *permission.GrantPermissionOutput
+				grantOutput     *permission.AssignRoleOutput
 			}
 
 			suite.Setup(func(ctx context.Context, app *UserApp) {
@@ -1285,23 +1284,23 @@ func TestUserGrantPermission(t *testing.T) {
 					return createFailedPermissionCheck()
 				}
 
-				app.PermissionSvcMock.GrantPermissionStub = func(ctx context.Context, input *permission.GrantPermissionInput) *permission.GrantPermissionOutput {
+				app.PermissionSvcMock.AssignRoleStub = func(ctx context.Context, input *permission.AssignRoleInput) *permission.AssignRoleOutput {
 					assert.Equal(t, r.input.targetUserId, input.UserID, r.name)
-					assert.Equal(t, r.input.permission, input.Permission, r.name)
+					assert.Equal(t, r.input.roleName, input.RoleName, r.name)
 					grantCounter.Inc()
 					if r.grantOutput != nil {
 						return r.grantOutput
 					}
-					return createFailedGrant()
+					return createFailedAssign()
 				}
 
 				initialUsers := app.Helper.GetAllUsers(ctx, t)
 
-				output := app.Service.GrantPermission(ctx, &user.GrantPermissionInput{
+				output := app.Service.AssignRole(ctx, &user.AssignRoleInput{
 					TraceId:      r.input.traceId,
 					ActorId:      r.input.actorId,
 					TargetUserId: r.input.targetUserId,
-					Permission:   r.input.permission,
+					RoleName:     r.input.roleName,
 				})
 
 				afterUsers := app.Helper.GetAllUsers(ctx, t)
@@ -1321,7 +1320,7 @@ func TestUserGrantPermission(t *testing.T) {
 				}
 			}
 
-			suite.Run(t, "GrantPermission scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+			suite.Run(t, "AssignRole scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
 				runRows(t, app, []*testRow{
 					// ===== Success Tests =====
 					{
@@ -1330,16 +1329,16 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           true,
-							message:           "Permission granted successfully",
+							message:           "Role assigned successfully",
 							expectedCountMock: 1,
 							grantCalls:        1,
 						},
 						permissionCheck: createGrantedPermissionCheck(),
-						grantOutput:     createSuccessfulGrant(),
+						grantOutput:     createSuccessfulAssign(),
 					},
 
 					// ===== Validation Tests =====
@@ -1349,7 +1348,7 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1364,7 +1363,7 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      0,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1379,7 +1378,7 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: 0,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1394,11 +1393,11 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "",
+							roleName:     "",
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Permission is mandatory",
+							message:           "Role name is mandatory",
 							expectedCountMock: 0,
 							grantCalls:        0,
 						},
@@ -1411,7 +1410,7 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1427,7 +1426,7 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1443,16 +1442,16 @@ func TestUserGrantPermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Failed to grant permission",
+							message:           "Failed to assign role",
 							expectedCountMock: 1,
 							grantCalls:        1,
 						},
 						permissionCheck: createGrantedPermissionCheck(),
-						grantOutput:     createFailedGrant(),
+						grantOutput:     createFailedAssign(),
 					},
 				})
 			})
@@ -1460,8 +1459,7 @@ func TestUserGrantPermission(t *testing.T) {
 		})
 	})
 }
-
-func TestUserRevokePermission(t *testing.T) {
+func TestUserUnassignRole(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
 		suite.Describe(t, "User RevokePermission", func() {
 
@@ -1471,7 +1469,7 @@ func TestUserRevokePermission(t *testing.T) {
 				traceId      string
 				actorId      int
 				targetUserId int
-				permission   string
+				roleName     string
 			}
 			type expected struct {
 				success           bool
@@ -1485,7 +1483,7 @@ func TestUserRevokePermission(t *testing.T) {
 				input           *input
 				expected        *expected
 				permissionCheck *permission.CheckPermissionOutput
-				revokeOutput    *permission.RevokePermissionOutput
+				revokeOutput    *permission.UnassignRoleOutput
 			}
 
 			suite.Setup(func(ctx context.Context, app *UserApp) {
@@ -1529,23 +1527,23 @@ func TestUserRevokePermission(t *testing.T) {
 					return createFailedPermissionCheck()
 				}
 
-				app.PermissionSvcMock.RevokePermissionStub = func(ctx context.Context, input *permission.RevokePermissionInput) *permission.RevokePermissionOutput {
+				app.PermissionSvcMock.UnassignRoleStub = func(ctx context.Context, input *permission.UnassignRoleInput) *permission.UnassignRoleOutput {
 					assert.Equal(t, r.input.targetUserId, input.UserID, r.name)
-					assert.Equal(t, r.input.permission, input.Permission, r.name)
+					assert.Equal(t, r.input.roleName, input.RoleName, r.name)
 					revokeCounter.Inc()
 					if r.revokeOutput != nil {
 						return r.revokeOutput
 					}
-					return createFailedRevoke()
+					return createFailedUnassign()
 				}
 
 				initialUsers := app.Helper.GetAllUsers(ctx, t)
 
-				output := app.Service.RevokePermission(ctx, &user.RevokePermissionInput{
+				output := app.Service.UnassignRole(ctx, &user.UnassignRoleInput{
 					TraceId:      r.input.traceId,
 					ActorId:      r.input.actorId,
 					TargetUserId: r.input.targetUserId,
-					Permission:   r.input.permission,
+					RoleName:     r.input.roleName,
 				})
 
 				afterUsers := app.Helper.GetAllUsers(ctx, t)
@@ -1565,7 +1563,7 @@ func TestUserRevokePermission(t *testing.T) {
 				}
 			}
 
-			suite.Run(t, "RevokePermission scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+			suite.Run(t, "UnassignRole scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
 				runRows(t, app, []*testRow{
 					// ===== Success Tests =====
 					{
@@ -1574,16 +1572,16 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           true,
-							message:           "Permission revoked successfully",
+							message:           "Role unassigned successfully",
 							expectedCountMock: 1,
 							revokeCalls:       1,
 						},
 						permissionCheck: createGrantedPermissionCheck(),
-						revokeOutput:    createSuccessfulRevoke(),
+						revokeOutput:    createSuccessfulUnassign(),
 					},
 
 					// ===== Validation Tests =====
@@ -1593,7 +1591,7 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1608,7 +1606,7 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      0,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1623,7 +1621,7 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: 0,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1638,11 +1636,11 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "",
+							roleName:     "",
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Permission is mandatory",
+							message:           "Role name is mandatory",
 							expectedCountMock: 0,
 							revokeCalls:       0,
 						},
@@ -1655,7 +1653,7 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1671,7 +1669,7 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
@@ -1687,20 +1685,272 @@ func TestUserRevokePermission(t *testing.T) {
 							traceId:      "trace-test",
 							actorId:      Users[0].Id,
 							targetUserId: Users[1].Id,
-							permission:   "user:profile_update",
+							roleName:     "user:profile_update",
 						},
 						expected: &expected{
 							success:           false,
-							message:           "Failed to revoke permission",
+							message:           "Failed to unassign role",
 							expectedCountMock: 1,
 							revokeCalls:       1,
 						},
 						permissionCheck: createGrantedPermissionCheck(),
-						revokeOutput:    createFailedRevoke(),
+						revokeOutput:    createFailedUnassign(),
 					},
 				})
 			})
 
+		})
+	})
+}
+
+func TestUserManageRolePermission(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "User ManageRolePermission", func() {
+
+			// ========== 1. Declare Fixture Variables ==========
+			var Users []DataUser
+
+			// ========== 2. Define Test Structures ==========
+			type input struct {
+				op       string // AuditActionGrant or AuditActionRevoke
+				traceId  string
+				actorId  int
+				roleName string
+				perm     string
+			}
+			type expected struct {
+				success           bool
+				message           string
+				expectedCountMock int
+				downstreamCalls   int
+			}
+			type testRow struct {
+				name            string
+				input           *input
+				expected        *expected
+				permissionCheck *permission.CheckPermissionOutput
+				downstreamOK    bool // permission-module call succeeds
+			}
+
+			// ========== 3. Setup Fixtures ==========
+			suite.Setup(func(ctx context.Context, app *UserApp) {
+				Users = []DataUser{
+					{
+						Idx:      0,
+						Username: "actoruser",
+						Email:    "actor@example.com",
+						FullName: "Actor User",
+						Password: "password123",
+					},
+				}
+
+				for i, userData := range Users {
+					inserted := app.Helper.InsertUserWithHashedPassword(ctx, t, userData.Username, userData.Email, userData.FullName, userData.Password)
+					Users[i].Id = inserted.Id
+				}
+			})
+
+			// ========== 4. Define Test Runner ==========
+			runtest := func(t *testing.T, app *UserApp, r *testRow) {
+				ctx := context.Background()
+
+				counter := &testsuite.Counter{}
+				downstreamCounter := &testsuite.Counter{}
+
+				app.PermissionSvcMock.CheckPermissionStub = func(ctx context.Context, input *permission.CheckPermissionInput) *permission.CheckPermissionOutput {
+					assert.Equal(t, r.input.actorId, input.UserID, r.name)
+					assert.Equal(t, "super_user", input.Permission, r.name)
+					counter.Inc()
+					if r.permissionCheck != nil {
+						return r.permissionCheck
+					}
+					return createFailedPermissionCheck()
+				}
+				app.PermissionSvcMock.AssignPermissionToRoleStub = func(ctx context.Context, input *permission.AssignPermissionToRoleInput) *permission.AssignPermissionToRoleOutput {
+					assert.Equal(t, r.input.roleName, input.RoleName, r.name)
+					assert.Equal(t, r.input.perm, input.Permission, r.name)
+					assert.Equal(t, r.input.actorId, input.ActorId, r.name)
+					downstreamCounter.Inc()
+					if r.downstreamOK {
+						return &permission.AssignPermissionToRoleOutput{Success: true, Message: "Permission assigned to role successfully"}
+					}
+					return &permission.AssignPermissionToRoleOutput{Success: false, Message: "Unknown permission"}
+				}
+				app.PermissionSvcMock.RemovePermissionFromRoleStub = func(ctx context.Context, input *permission.RemovePermissionFromRoleInput) *permission.RemovePermissionFromRoleOutput {
+					assert.Equal(t, r.input.roleName, input.RoleName, r.name)
+					assert.Equal(t, r.input.perm, input.Permission, r.name)
+					assert.Equal(t, r.input.actorId, input.ActorId, r.name)
+					downstreamCounter.Inc()
+					if r.downstreamOK {
+						return &permission.RemovePermissionFromRoleOutput{Success: true, Message: "Permission removed from role successfully"}
+					}
+					return &permission.RemovePermissionFromRoleOutput{Success: false, Message: "Unknown permission"}
+				}
+
+				var success bool
+				var message string
+				switch r.input.op {
+				case permission.AuditActionGrant:
+					out := app.Service.AssignPermissionToRole(ctx, &user.AssignPermissionToRoleInput{
+						TraceId:    r.input.traceId,
+						ActorId:    r.input.actorId,
+						RoleName:   r.input.roleName,
+						Permission: r.input.perm,
+					})
+					success, message = out.Success, out.Message
+				case permission.AuditActionRevoke:
+					out := app.Service.RemovePermissionFromRole(ctx, &user.RemovePermissionFromRoleInput{
+						TraceId:    r.input.traceId,
+						ActorId:    r.input.actorId,
+						RoleName:   r.input.roleName,
+						Permission: r.input.perm,
+					})
+					success, message = out.Success, out.Message
+				}
+
+				assert.Equal(t, r.expected.success, success, r.name)
+				assert.Equal(t, r.expected.message, message, r.name)
+				assert.Equal(t, r.expected.expectedCountMock, counter.Total(), r.name+" - super user check call count")
+				assert.Equal(t, r.expected.downstreamCalls, downstreamCounter.Total(), r.name+" - downstream call count")
+			}
+
+			// ========== 5. Define Rows Runner ==========
+			runRows := func(t *testing.T, app *UserApp, rows []*testRow) {
+				for _, r := range rows {
+					runtest(t, app, r)
+				}
+			}
+
+			// ========== 6. Execute Test Scenarios ==========
+			suite.Run(t, "ManageRolePermission scenarios", func(t *testing.T, ctx context.Context, app *UserApp) {
+				runRows(t, app, []*testRow{
+					// ===== Success Tests =====
+					{
+						name: "Should grant a permission to a role when actor holds super user",
+						input: &input{
+							op:       permission.AuditActionGrant,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "user:profile_update",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permission assigned to role successfully",
+							expectedCountMock: 1,
+							downstreamCalls:   1,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+						downstreamOK:    true,
+					},
+					{
+						name: "Should revoke a permission from a role when actor holds super user",
+						input: &input{
+							op:       permission.AuditActionRevoke,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "user:profile_update",
+						},
+						expected: &expected{
+							success:           true,
+							message:           "Permission removed from role successfully",
+							expectedCountMock: 1,
+							downstreamCalls:   1,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+						downstreamOK:    true,
+					},
+
+					// ===== Authorization Tests =====
+					{
+						name: "Should fail when actor does not hold super user (grant)",
+						input: &input{
+							op:       permission.AuditActionGrant,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unauthorized: only super user can manage role permissions",
+							expectedCountMock: 1,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: false},
+					},
+
+					// ===== Downstream Failure Tests =====
+					{
+						name: "Should surface unknown-permission rejection from the permission module",
+						input: &input{
+							op:       permission.AuditActionGrant,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "garbage:permission",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Unknown permission",
+							expectedCountMock: 1,
+							downstreamCalls:   1,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+						downstreamOK:    false,
+					},
+
+					// ===== Validation Tests =====
+					{
+						name: "Should fail when TraceId is empty",
+						input: &input{
+							op:       permission.AuditActionGrant,
+							traceId:  "",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "TraceId is mandatory",
+							expectedCountMock: 0,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when RoleName is empty",
+						input: &input{
+							op:       permission.AuditActionGrant,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: "",
+							perm:     "user:profile_update",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Role name is mandatory",
+							expectedCountMock: 0,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+					{
+						name: "Should fail when Permission is empty",
+						input: &input{
+							op:       permission.AuditActionRevoke,
+							traceId:  "trace-test",
+							actorId:  Users[0].Id,
+							roleName: permission.RoleMember,
+							perm:     "",
+						},
+						expected: &expected{
+							success:           false,
+							message:           "Permission is mandatory",
+							expectedCountMock: 0,
+						},
+						permissionCheck: &permission.CheckPermissionOutput{Success: true, HasPermission: true},
+					},
+				})
+			})
 		})
 	})
 }

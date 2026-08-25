@@ -268,39 +268,39 @@ func createFailedPermissionCheck() *permission.CheckPermissionOutput {
 	}
 }
 
-// createSuccessfulGrant returns a mock result where the permission module
-// granted the permission.
-func createSuccessfulGrant() *permission.GrantPermissionOutput {
-	return &permission.GrantPermissionOutput{
+// createSuccessfulAssign returns a mock result where the permission module
+// assigned the role.
+func createSuccessfulAssign() *permission.AssignRoleOutput {
+	return &permission.AssignRoleOutput{
 		Success: true,
-		Message: "Permission granted successfully",
+		Message: "Role assigned successfully",
 	}
 }
 
-// createFailedGrant returns a mock result where the permission module failed
-// to grant the permission.
-func createFailedGrant() *permission.GrantPermissionOutput {
-	return &permission.GrantPermissionOutput{
+// createFailedAssign returns a mock result where the permission module failed
+// to assign the role.
+func createFailedAssign() *permission.AssignRoleOutput {
+	return &permission.AssignRoleOutput{
 		Success: false,
-		Message: "Failed to grant permission",
+		Message: "Failed to assign role",
 	}
 }
 
-// createSuccessfulRevoke returns a mock result where the permission module
-// revoked the permission.
-func createSuccessfulRevoke() *permission.RevokePermissionOutput {
-	return &permission.RevokePermissionOutput{
+// createSuccessfulUnassign returns a mock result where the permission module
+// removed the role.
+func createSuccessfulUnassign() *permission.UnassignRoleOutput {
+	return &permission.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	}
 }
 
-// createFailedRevoke returns a mock result where the permission module failed
-// to revoke the permission.
-func createFailedRevoke() *permission.RevokePermissionOutput {
-	return &permission.RevokePermissionOutput{
+// createFailedUnassign returns a mock result where the permission module
+// failed to remove the role.
+func createFailedUnassign() *permission.UnassignRoleOutput {
+	return &permission.UnassignRoleOutput{
 		Success: false,
-		Message: "Failed to revoke permission",
+		Message: "Failed to unassign role",
 	}
 }
 
