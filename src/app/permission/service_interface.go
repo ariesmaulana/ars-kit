@@ -30,6 +30,10 @@ type GrantPermissionInput struct {
 	TraceId    string
 	UserID     int
 	Permission string
+	// ActorId is the user performing the grant; 0 means a system-initiated
+	// change (no acting user, e.g. a background workflow step). Recorded in
+	// the audit log.
+	ActorId int
 }
 
 type GrantPermissionOutput struct {
@@ -42,6 +46,9 @@ type RevokePermissionInput struct {
 	TraceId    string
 	UserID     int
 	Permission string
+	// ActorId is the user performing the revoke; 0 means a system-initiated
+	// change (no acting user). Recorded in the audit log.
+	ActorId int
 }
 
 type RevokePermissionOutput struct {

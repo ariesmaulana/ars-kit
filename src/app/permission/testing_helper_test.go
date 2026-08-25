@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 )
@@ -51,6 +52,27 @@ func (h *TestHelper) GetAllPermissions(ctx context.Context, t *testing.T, userID
 	}
 	assert.Nil(t, rows.Err())
 	return perms
+}
+
+// GetPermissionAudit returns all audit rows recorded against a target user,
+// ordered by insertion. ActorId is nil for system-initiated actions.
+func (h *TestHelper) GetPermissionAudit(ctx context.Context, t *testing.T, targetID int) []permission.PermissionAudit {
+	rows, err := h.pool.Query(ctx,
+		`SELECT id, actor_id, target_id, permission, action, created_at FROM permission_audit WHERE target_id = $1 ORDER BY id`,
+		targetID,
+	)
+	assert.Nil(t, err)
+	defer rows.Close()
+
+	var audits []permission.PermissionAudit
+	for rows.Next() {
+		var a permission.PermissionAudit
+		err := rows.Scan(&a.Id, &a.ActorId, &a.TargetId, &a.Permission, &a.Action, &a.CreatedAt)
+		assert.Nil(t, err)
+		audits = append(audits, a)
+	}
+	assert.Nil(t, rows.Err())
+	return audits
 }
 
 func (h *TestHelper) ClearPermissions(ctx context.Context, t *testing.T) {

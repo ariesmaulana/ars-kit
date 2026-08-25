@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ariesmaulana/ars-kit/src/clock"
 	"github.com/rs/zerolog/log"
 )
 
@@ -120,6 +121,16 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		return resp
 	}
 
+	// Audit trail: who granted what, when. Written inside the same transaction
+	// as the permission change, so a rolled-back grant never leaves an audit
+	// row (and vice versa).
+	err = db.InsertPermissionAudit(ctx, input.ActorId, input.UserID, input.Permission, AuditActionGrant, clock.Now())
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write grant audit row")
+		resp.Message = "Failed to grant permission"
+		return resp
+	}
+
 	err = db.Commit()
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
@@ -161,6 +172,15 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 	err = db.RemovePermission(ctx, input.UserID, key(input.UserID, input.Permission))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to revoke permission")
+		resp.Message = "Failed to revoke permission"
+		return resp
+	}
+
+	// Audit trail: who revoked what, when. Written inside the same transaction
+	// as the permission change.
+	err = db.InsertPermissionAudit(ctx, input.ActorId, input.UserID, input.Permission, AuditActionRevoke, clock.Now())
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write revoke audit row")
 		resp.Message = "Failed to revoke permission"
 		return resp
 	}

@@ -3,6 +3,7 @@ package permission
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,6 +75,21 @@ func (st *storageTx) RemovePermission(ctx context.Context, userID int, permissio
 	)
 	if err != nil {
 		return fmt.Errorf("failed to remove permission: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) InsertPermissionAudit(ctx context.Context, actorID int, targetID int, permission string, action string, at time.Time) error {
+	var actor *int
+	if actorID != 0 {
+		actor = &actorID
+	}
+	_, err := st.tx.Exec(ctx,
+		`INSERT INTO permission_audit (actor_id, target_id, permission, action, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		actor, targetID, permission, action, at,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert permission audit: %w", err)
 	}
 	return nil
 }
