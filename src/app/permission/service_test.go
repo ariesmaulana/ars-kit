@@ -14,7 +14,10 @@ func TestUserGrantPermission(t *testing.T) {
 		suite.Describe(t, "User GrantPermission", func() {
 
 			// ========== 1. Declare Fixture Variables ==========
-			var Users []DataUser
+			var (
+				Users       []DataUser
+				Permissions []DataPermission
+			)
 
 			// ========== 2. Define Test Structures ==========
 			type input struct {
@@ -34,6 +37,16 @@ func TestUserGrantPermission(t *testing.T) {
 
 			// ========== 3. Setup Fixtures ==========
 			suite.Setup(func(ctx context.Context, app *PermissionApp) {
+				Permissions = []DataPermission{
+					{Idx: 0, Permission: "read:profile"},
+					{Idx: 1, Permission: "write:profile"},
+				}
+
+				// Catalog rows would be inserted via SOP in production.
+				for _, p := range Permissions {
+					app.Helper.AddKnownPermission(ctx, t, p.Permission)
+				}
+
 				Users = []DataUser{
 					{Idx: 0, ID: 100},
 					{Idx: 1, ID: 200},
@@ -155,6 +168,18 @@ func TestUserGrantPermission(t *testing.T) {
 						expected: &expected{
 							success: false,
 							message: "Permission is mandatory",
+						},
+					},
+					{
+						name: "Should fail when permission is not in the catalog",
+						input: &input{
+							traceId:    "trace-test",
+							userID:     Users[0].ID,
+							permission: "garbage:permission",
+						},
+						expected: &expected{
+							success: false,
+							message: "Unknown permission",
 						},
 					},
 					{

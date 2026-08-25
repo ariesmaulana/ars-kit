@@ -11,4 +11,3 @@ CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user
 CREATE INDEX IF NOT EXISTS idx_user_permissions_permission ON user_permissions(permission);
 
 -- +goose Down
-DROP TABLE IF EXISTS user_permissions;

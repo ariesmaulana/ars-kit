@@ -24,6 +24,16 @@ func (h *TestHelper) AddPermission(ctx context.Context, t *testing.T, userID int
 	assert.Nil(t, err)
 }
 
+// AddKnownPermission inserts a row into the permissions catalog, simulating
+// the SOP step of registering a new feature's permission.
+func (h *TestHelper) AddKnownPermission(ctx context.Context, t *testing.T, permission string) {
+	_, err := h.pool.Exec(ctx,
+		`INSERT INTO permissions (permission) VALUES ($1) ON CONFLICT DO NOTHING`,
+		permission,
+	)
+	assert.Nil(t, err)
+}
+
 func (h *TestHelper) GetAllPermissions(ctx context.Context, t *testing.T, userID int) []string {
 	rows, err := h.pool.Query(ctx,
 		`SELECT permission FROM user_permissions WHERE user_id = $1 ORDER BY permission`,
@@ -51,4 +61,10 @@ func (h *TestHelper) ClearPermissions(ctx context.Context, t *testing.T) {
 type DataUser struct {
 	Idx int
 	ID  int
+}
+
+// DataPermission represents a permission catalog fixture for testing
+type DataPermission struct {
+	Idx        int // Index in the fixture array
+	Permission string
 }
