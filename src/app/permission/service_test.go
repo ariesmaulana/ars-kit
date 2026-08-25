@@ -183,6 +183,18 @@ func TestUserGrantPermission(t *testing.T) {
 						},
 					},
 					{
+						name: "Should fail when granting super_user (bootstrap-only)",
+						input: &input{
+							traceId:    "trace-test",
+							userID:     Users[0].ID,
+							permission: permission.PermissionSuperUser,
+						},
+						expected: &expected{
+							success: false,
+							message: "Cannot grant super_user",
+						},
+					},
+					{
 						name: "Should fail when TraceId, UserID, and Permission are all empty",
 						input: &input{
 							traceId:    "",

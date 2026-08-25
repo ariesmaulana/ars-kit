@@ -93,6 +93,16 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		return resp
 	}
 
+	// Policy guard: super_user is bootstrap-only. It is never granted
+	// at runtime — not by admins, not by workflows — only seeded directly in
+	// the database via SOP. Every grant flows through this method, so this is
+	// the single choke point that makes the invariant structural.
+	if input.Permission == PermissionSuperUser {
+		log.Warn().Str("traceId", input.TraceId).Int("targetUserId", input.UserID).Msg("Rejected grant of super_user")
+		resp.Message = "Cannot grant super_user"
+		return resp
+	}
+
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
