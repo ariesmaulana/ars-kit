@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/smtp"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -60,25 +61,37 @@ func (s *smtpSender) send(ctx context.Context, msg EmailMessage, withHTML bool) 
 	// Bcc recipients go on the envelope only, never in the headers.
 	rcpts := append(append(append([]string{}, msg.To...), msg.Cc...), msg.Bcc...)
 
-	if err := s.deliver(from, rcpts, raw); err != nil {
-		return wrapError(classifySMTP(err), providerSMTP, err)
+	if err := s.deliver(ctx, from, rcpts, raw); err != nil {
+		code := classifySMTP(err)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			code = ErrTimeout
+		}
+		return wrapError(code, providerSMTP, err)
 	}
 	return nil
 }
 
-// deliver opens a TCP connection, enforces STARTTLS, authenticates, and
-// submits the message. The context is not honored by net/smtp (no
-// context-aware dial in stdlib); callers cancel at the HTTP layer / earlier.
+// deliver opens a TCP connection, enforces STARTTLS (TLS ≥ 1.2), authenticates,
+// and submits the message. The context is applied as a deadline on the
+// underlying connection, since net/smtp has no context-aware API.
 // ponytail: if MIME multipart assembly or header encoding gets painful,
 // swap net/smtp + mime for gopkg.in/mail.v2 (new dependency).
-func (s *smtpSender) deliver(from string, to []string, raw []byte) error {
+func (s *smtpSender) deliver(ctx context.Context, from string, to []string, raw []byte) error {
 	addr := net.JoinHostPort(s.host, strconv.Itoa(s.port))
 
-	conn, err := net.Dial("tcp", addr)
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+
+	// Pin the caller's deadline onto the connection right away so the SMTP
+	// greeting read, AUTH, RCPT, and DATA all respect the context (net/smtp
+	// has no context-aware API; the TLS conn inherits this deadline too).
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
+	}
 
 	c, err := smtp.NewClient(conn, s.host)
 	if err != nil {
@@ -89,7 +102,7 @@ func (s *smtpSender) deliver(from string, to []string, raw []byte) error {
 	if ok, _ := c.Extension("STARTTLS"); !ok {
 		return fmt.Errorf("email: SMTP server %s does not support STARTTLS", addr)
 	}
-	if err := c.StartTLS(&tls.Config{ServerName: s.host}); err != nil {
+	if err := c.StartTLS(&tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12}); err != nil {
 		return err
 	}
 	if s.username != "" {
@@ -157,7 +170,11 @@ func buildMessage(from string, msg EmailMessage, withHTML bool) ([]byte, error) 
 
 func randomBoundary() string {
 	buf := make([]byte, 16)
-	_, _ = rand.Read(buf)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failing is essentially unheard of, but fall back to a
+		// time-based boundary so the value stays unique instead of all-zeros.
+		return fmt.Sprintf("ars-kit-boundary-%d", time.Now().UnixNano())
+	}
 	return hex.EncodeToString(buf)
 }
 

@@ -11,8 +11,12 @@ import (
 )
 
 // NewEmailSender constructs an EmailSender for the configured provider.
+// An empty provider yields a no-op sender so deployments that do not send
+// email yet pay no credential or runtime cost.
 func NewEmailSender(cfg Config) (EmailSender, error) {
 	switch cfg.Provider {
+	case "":
+		return &noopSender{}, nil
 	case ProviderSMTP:
 		return newSMTPSender(cfg.SMTP), nil
 	case ProviderResend:
@@ -23,6 +27,12 @@ func NewEmailSender(cfg Config) (EmailSender, error) {
 		return nil, fmt.Errorf("notification/email: unknown provider %q", cfg.Provider)
 	}
 }
+
+// noopSender discards everything. Used when EMAIL_PROVIDER is empty.
+type noopSender struct{}
+
+func (noopSender) SendText(context.Context, EmailMessage) error { return nil }
+func (noopSender) SendHTML(context.Context, EmailMessage) error { return nil }
 
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Second}

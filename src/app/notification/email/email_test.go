@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ── validate / resolveFrom ──────────────────────────────────────────────
@@ -333,12 +335,87 @@ func TestNewEmailSenderUnknownProvider(t *testing.T) {
 func TestNewEmailSenderSMTP(t *testing.T) {
 	s, err := NewEmailSender(Config{
 		Provider: ProviderSMTP,
-		SMTP: SMTPConfig{Host: "localhost", Port: 25, Username: "u", Password: "p", From: "f@e.com"},
+		SMTP:     SMTPConfig{Host: "localhost", Port: 25, Username: "u", Password: "p", From: "f@e.com"},
 	})
 	if err != nil {
 		t.Fatalf("NewEmailSender() error = %v", err)
 	}
 	if _, ok := s.(*smtpSender); !ok {
 		t.Errorf("got %T, want *smtpSender", s)
+	}
+}
+
+func TestNewEmailSenderDisabledIsNoOp(t *testing.T) {
+	s, err := NewEmailSender(Config{Provider: ""})
+	if err != nil {
+		t.Fatalf("NewEmailSender() error = %v", err)
+	}
+	if err := s.SendText(context.Background(), EmailMessage{To: []string{"a@b.com"}, Text: "x"}); err != nil {
+		t.Errorf("noop SendText() error = %v", err)
+	}
+	if err := s.SendHTML(context.Background(), EmailMessage{To: []string{"a@b.com"}, Text: "x", HTML: "<p>hi</p>"}); err != nil {
+		t.Errorf("noop SendHTML() error = %v", err)
+	}
+}
+
+// ── header injection ──────────────────────────────────────────────────
+
+func TestValidateRejectsHeaderInjection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		msg  EmailMessage
+	}{
+		{"subject CRLF", EmailMessage{To: []string{"a@b.com"}, Subject: "sub\r\ninj", Text: "body"}},
+		{"subject LF", EmailMessage{To: []string{"a@b.com"}, Subject: "sub\ninj", Text: "body"}},
+		{"subject CR", EmailMessage{To: []string{"a@b.com"}, Subject: "sub\rinj", Text: "body"}},
+		{"to CRLF", EmailMessage{To: []string{"a@b.com\r\nX-Injected: true"}, Text: "body"}},
+		{"cc CRLF", EmailMessage{To: []string{"a@b.com"}, Cc: []string{"c@b.com\r\nX-Injected: true"}, Text: "body"}},
+		{"from CRLF", EmailMessage{To: []string{"a@b.com"}, From: "f\r\nX-Injected: true", Text: "body"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validate(tc.msg)
+			var se *SendError
+			if !errors.As(err, &se) || se.Code != ErrBadRequest {
+				t.Fatalf("validate() error = %v, want ErrBadRequest", err)
+			}
+		})
+	}
+}
+
+// ── context timeout (SMTP dial) ──────────────────────────────────────
+
+func TestSMTPDeliverRespectsContextDeadline(t *testing.T) {
+	// Server accepts connections but never sends the SMTP greeting, so the
+	// client blocks and the context deadline must fire.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				time.Sleep(5 * time.Second)
+			}(c)
+		}
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	s := &smtpSender{host: "127.0.0.1", port: port, from: "f@e.com"}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	err = s.SendText(ctx, EmailMessage{To: []string{"a@b.com"}, Text: "body"})
+	var se *SendError
+	if !errors.As(err, &se) {
+		t.Fatalf("error = %T %v, want *SendError", err, err)
+	}
+	if se.Code != ErrTimeout {
+		t.Errorf("Code = %v, want ErrTimeout (got %v)", se.Code, se)
 	}
 }

@@ -19,10 +19,6 @@ func setRequiredEnv(t *testing.T) {
 		"DB_NAME":           "ars_kit_test",
 		"JWT_SECRET":        "test-secret",
 		"CORS_ALLOW_ORIGIN": "http://localhost:3000",
-		// Email provider defaults to smtp, which requires SMTP creds.
-		"SMTP_USERNAME": "test@example.com",
-		"SMTP_PASSWORD": "test-password",
-		"SMTP_FROM":     "test@example.com",
 	} {
 		t.Setenv(k, v)
 	}
@@ -105,7 +101,7 @@ func TestInitConfigWorkflowStepTimeoutInvalid(t *testing.T) {
 	}
 }
 
-func TestInitConfigEmailSMTPDefaults(t *testing.T) {
+func TestInitConfigEmailDisabledByDefault(t *testing.T) {
 	setRequiredEnv(t)
 
 	cfg, err := config.InitConfig()
@@ -113,14 +109,41 @@ func TestInitConfigEmailSMTPDefaults(t *testing.T) {
 		t.Fatalf("InitConfig() error = %v", err)
 	}
 
-	if cfg.EmailProvider != "smtp" {
-		t.Errorf("EmailProvider = %q, want default smtp", cfg.EmailProvider)
+	if cfg.EmailProvider != "" {
+		t.Errorf("EmailProvider = %q, want empty (disabled)", cfg.EmailProvider)
 	}
+	// SMTP host/port still loaded from env (or defaults) even when disabled.
 	if cfg.SMTPHost != "smtp.gmail.com" {
 		t.Errorf("SMTPHost = %q, want default smtp.gmail.com", cfg.SMTPHost)
 	}
 	if cfg.SMTPPort != 587 {
 		t.Errorf("SMTPPort = %d, want default 587", cfg.SMTPPort)
+	}
+}
+
+func TestInitConfigEmailSMTPWithCreds(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMAIL_PROVIDER", "smtp")
+	t.Setenv("SMTP_USERNAME", "user@test.com")
+	t.Setenv("SMTP_PASSWORD", "pass")
+	t.Setenv("SMTP_FROM", "from@test.com")
+
+	cfg, err := config.InitConfig()
+	if err != nil {
+		t.Fatalf("InitConfig() error = %v", err)
+	}
+	if cfg.EmailProvider != "smtp" {
+		t.Errorf("EmailProvider = %q, want smtp", cfg.EmailProvider)
+	}
+}
+
+func TestInitConfigEmailSMTPMissingCreds(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("EMAIL_PROVIDER", "smtp")
+
+	_, err := config.InitConfig()
+	if err == nil {
+		t.Fatal("InitConfig() error = nil, want error for missing SMTP_USERNAME")
 	}
 }
 

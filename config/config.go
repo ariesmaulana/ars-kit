@@ -53,7 +53,7 @@ type Config struct {
 	EmailProvider string // "smtp" (default), "resend", "brevo"
 	SMTPHost      string // default: smtp.gmail.com
 	SMTPPort      int    // default: 587
-	SMTPUsername   string // required if provider=smtp
+	SMTPUsername  string // required if provider=smtp
 	SMTPPassword  string // Gmail: app password, not account password
 	SMTPFrom      string // required if provider=smtp
 	ResendAPIKey  string // required if provider=resend
@@ -151,7 +151,7 @@ func InitConfig() (*Config, error) {
 	}
 
 	// Email notification
-	cfg.EmailProvider = getEnvOrDefault("EMAIL_PROVIDER", envs, "smtp")
+	cfg.EmailProvider = getEnvOrDefault("EMAIL_PROVIDER", envs, "")
 	cfg.SMTPHost = getEnvOrDefault("SMTP_HOST", envs, "smtp.gmail.com")
 	cfg.SMTPPort, err = parseIntEnv("SMTP_PORT", envs, 587)
 	if err != nil {
@@ -203,7 +203,10 @@ func (c *Config) validate() error {
 	}
 
 	// Email notification: validate required fields per configured provider.
+	// Empty EMAIL_PROVIDER disables email — no credentials required.
 	switch c.EmailProvider {
+	case "":
+		// disabled
 	case "smtp":
 		if c.SMTPUsername == "" {
 			return errors.New("missing required config: SMTP_USERNAME")

@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // Sentinel errors categorize why a send failed. Callers can branch on
@@ -79,13 +80,25 @@ func resolveFrom(msg EmailMessage, defaultFrom string) string {
 }
 
 // validate checks the trust boundary: a message must address someone and
-// carry a text body. Returns ErrBadRequest on violation.
+// carry a text body, and no field may contain CR/LF (header injection).
+// Returns ErrBadRequest on violation.
 func validate(msg EmailMessage) error {
 	if len(msg.To) == 0 {
 		return wrapError(ErrBadRequest, "", errors.New("email: no To recipient"))
 	}
 	if msg.Text == "" {
 		return wrapError(ErrBadRequest, "", errors.New("email: Text body is required"))
+	}
+	if strings.ContainsAny(msg.Subject, "\r\n") {
+		return wrapError(ErrBadRequest, "", errors.New("email: Subject must not contain CR or LF"))
+	}
+	if strings.ContainsAny(msg.From, "\r\n") {
+		return wrapError(ErrBadRequest, "", errors.New("email: From must not contain CR or LF"))
+	}
+	for _, addr := range append(append(append([]string{}, msg.To...), msg.Cc...), msg.Bcc...) {
+		if strings.ContainsAny(addr, "\r\n") {
+			return wrapError(ErrBadRequest, "", errors.New("email: recipient address must not contain CR or LF"))
+		}
 	}
 	return nil
 }
