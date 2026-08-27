@@ -11,6 +11,7 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/config"
 	"github.com/ariesmaulana/ars-kit/database"
+	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
@@ -68,15 +69,41 @@ type App struct {
 
 	UserService    user.Service
 	UserJWTService *user.JWTService
+
+	// Email notification (foundation) — no domain service consumes it yet.
+	EmailSender email.EmailSender
 	// OtherService other.Service — add app modules here as they appear
 }
 
 // buildApp wires foundation and app modules. Shared by serve and worker so the
 // wiring is written once.
 func buildApp(conf *config.Config, db *database.PostgresDB) *App {
-	//foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
+	// foundation module, this section for all module that work "globally" or need to be deps for other modules, such as permissions, notifications, worker, etc.
 	permissionStorage := permission.NewStorage(db.Pool)
 	permissionService := permission.NewService(permissionStorage)
+
+	// Email notification — pluggable SMTP/Resend/Brevo sender, selected by config.
+	emailSender, eerr := email.NewEmailSender(email.Config{
+		Provider: email.Provider(conf.EmailProvider),
+		SMTP: email.SMTPConfig{
+			Host:     conf.SMTPHost,
+			Port:     conf.SMTPPort,
+			Username: conf.SMTPUsername,
+			Password: conf.SMTPPassword,
+			From:     conf.SMTPFrom,
+		},
+		Resend: email.ResendConfig{
+			APIKey: conf.ResendAPIKey,
+			From:   conf.ResendFrom,
+		},
+		Brevo: email.BrevoConfig{
+			APIKey: conf.BrevoAPIKey,
+			From:   conf.BrevoFrom,
+		},
+	})
+	if eerr != nil {
+		log.Fatal().Err(eerr).Msg("Failed to create email sender")
+	}
 
 	// Workflow engine — PostgreSQL-backed multi-step background jobs. Business
 	// code enqueues jobs through the package-level workflow.Register; the
@@ -124,6 +151,7 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 		WorkflowEngine: workflowEngine,
 		UserService:    userService,
 		UserJWTService: jwtService,
+		EmailSender:    emailSender,
 	}
 }
 

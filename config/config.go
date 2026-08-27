@@ -48,6 +48,18 @@ type Config struct {
 	LoginMaxFailedAttempts   int // Consecutive failures before lockout (default: 5)
 	LoginFailedWindowMinutes int // Counting window in minutes (default: 15)
 	LoginLockoutMinutes      int // Lock duration in minutes (default: 15)
+
+	// Email notification (foundation module)
+	EmailProvider string // "smtp" (default), "resend", "brevo"
+	SMTPHost      string // default: smtp.gmail.com
+	SMTPPort      int    // default: 587
+	SMTPUsername  string // required if provider=smtp
+	SMTPPassword  string // Gmail: app password, not account password
+	SMTPFrom      string // required if provider=smtp
+	ResendAPIKey  string // required if provider=resend
+	ResendFrom    string // required if provider=resend
+	BrevoAPIKey   string // required if provider=brevo
+	BrevoFrom     string // required if provider=brevo
 }
 
 // InitConfig loads configuration from .env file (if present) or OS environment.
@@ -138,6 +150,21 @@ func InitConfig() (*Config, error) {
 		errs = append(errs, err)
 	}
 
+	// Email notification
+	cfg.EmailProvider = getEnvOrDefault("EMAIL_PROVIDER", envs, "")
+	cfg.SMTPHost = getEnvOrDefault("SMTP_HOST", envs, "smtp.gmail.com")
+	cfg.SMTPPort, err = parseIntEnv("SMTP_PORT", envs, 587)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	cfg.SMTPUsername = getEnv("SMTP_USERNAME", envs)
+	cfg.SMTPPassword = getEnv("SMTP_PASSWORD", envs)
+	cfg.SMTPFrom = getEnv("SMTP_FROM", envs)
+	cfg.ResendAPIKey = getEnv("RESEND_API_KEY", envs)
+	cfg.ResendFrom = getEnv("RESEND_FROM", envs)
+	cfg.BrevoAPIKey = getEnv("BREVO_API_KEY", envs)
+	cfg.BrevoFrom = getEnv("BREVO_FROM", envs)
+
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
@@ -173,6 +200,39 @@ func (c *Config) validate() error {
 	}
 	if c.LoginLockoutMinutes <= 0 {
 		return errors.New("invalid config: LOGIN_LOCKOUT_MINUTES must be positive")
+	}
+
+	// Email notification: validate required fields per configured provider.
+	// Empty EMAIL_PROVIDER disables email — no credentials required.
+	switch c.EmailProvider {
+	case "":
+		// disabled
+	case "smtp":
+		if c.SMTPUsername == "" {
+			return errors.New("missing required config: SMTP_USERNAME")
+		}
+		if c.SMTPPassword == "" {
+			return errors.New("missing required config: SMTP_PASSWORD")
+		}
+		if c.SMTPFrom == "" {
+			return errors.New("missing required config: SMTP_FROM")
+		}
+	case "resend":
+		if c.ResendAPIKey == "" {
+			return errors.New("missing required config: RESEND_API_KEY")
+		}
+		if c.ResendFrom == "" {
+			return errors.New("missing required config: RESEND_FROM")
+		}
+	case "brevo":
+		if c.BrevoAPIKey == "" {
+			return errors.New("missing required config: BREVO_API_KEY")
+		}
+		if c.BrevoFrom == "" {
+			return errors.New("missing required config: BREVO_FROM")
+		}
+	default:
+		return fmt.Errorf("invalid config: EMAIL_PROVIDER %q not in [smtp, resend, brevo]", c.EmailProvider)
 	}
 
 	return nil
@@ -239,4 +299,13 @@ func parseInt32Env(key string, dotEnvMap map[string]string, defaultValue int32) 
 		return defaultValue, fmt.Errorf("invalid %s value %q: %w", key, valStr, err)
 	}
 	return int32(val), nil
+}
+
+// getEnvOrDefault returns the value of key from dotEnvMap or OS env,
+// falling back to defaultValue when the key is absent or empty.
+func getEnvOrDefault(key string, dotEnvMap map[string]string, defaultValue string) string {
+	if val := getEnv(key, dotEnvMap); val != "" {
+		return val
+	}
+	return defaultValue
 }
