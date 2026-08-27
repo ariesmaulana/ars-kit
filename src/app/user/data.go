@@ -11,14 +11,38 @@ const (
 )
 
 type User struct {
-	Id          int
-	Username    string
-	Email       string
-	FullName    string
-	Status      UserStatus
-	LastLoginAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	Id               int
+	Username         string
+	Email            string
+	FullName         string
+	Status           UserStatus
+	EmailVerifiedAt  *time.Time
+	LastLoginAt      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// EmailTokenPurpose identifies what a single-purpose email token is for.
+type EmailTokenPurpose string
+
+const (
+	// EmailTokenPurposePasswordReset is the forgot-password reset token.
+	EmailTokenPurposePasswordReset EmailTokenPurpose = "password_reset"
+	// EmailTokenPurposeEmailVerification is the account email-verification token.
+	EmailTokenPurposeEmailVerification EmailTokenPurpose = "email_verification"
+)
+
+// EmailToken is a single-purpose one-time token (password reset or email
+// verification). Only its SHA-256 hash is stored; the plaintext token is sent
+// to the user and never persisted.
+type EmailToken struct {
+	Id        int
+	UserId    int
+	Purpose   EmailTokenPurpose
+	TokenHash string
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
 }
 
 // LoginState is the persisted per-account login-throttle state.

@@ -48,7 +48,11 @@ type service struct {
 	throttle          LoginThrottleConfig
 	jwtService        *JWTService
 	clockSource       clock.Source
+	emailCfg          EmailConfig
 }
+
+// defaultEmailTokenExpiry is used when EmailConfig.TokenExpiry is zero.
+const defaultEmailTokenExpiry = 24 * time.Hour
 
 const (
 	minPasswordLength      = 12
@@ -61,8 +65,8 @@ const (
 // still get a sane lockout instead of locking every account after one failure.
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
-// server-side.
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, clockSource ...clock.Source) Service {
+// server-side. emailCfg wires the email flows (forgot-password, verification).
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
 	}
@@ -76,6 +80,7 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 		throttle:          throttle,
 		jwtService:        jwtService,
 		clockSource:       cs,
+		emailCfg:          emailCfg,
 	}
 }
 

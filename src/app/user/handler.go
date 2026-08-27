@@ -97,6 +97,10 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	public.POST("/login", h.Login)
 	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
+	public.POST("/forgot-password", h.ForgotPassword)
+	public.POST("/reset-password", h.ResetPassword)
+	public.POST("/send-verification", h.SendVerificationEmail)
+	public.POST("/verify-email", h.VerifyEmail)
 
 	// Protected routes
 	protected := users.Group("")
@@ -136,6 +140,37 @@ type LoginRequest struct {
 // token. The field is optional: when omitted the refresh cookie is used.
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+// ForgotPasswordRequest represents the HTTP request body for forgot-password.
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// ResetPasswordRequest represents the HTTP request body for resetting a
+// password using the token emailed by forgot-password.
+type ResetPasswordRequest struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+
+// SendVerificationRequest represents the HTTP request body for requesting a
+// verification email.
+type SendVerificationRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// VerifyEmailRequest represents the HTTP request body for verifying an email
+// using the token emailed after sign-up.
+type VerifyEmailRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+
+// MessageResponse is a success/message envelope for actions that return no
+// data (forgot-password, reset-password, email verification).
+type MessageResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
 // UpdateUsernameRequest represents the HTTP request body for updating username
@@ -457,6 +492,131 @@ func (h *Handler) Logout(c echo.Context) error {
 	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: "Logged out successfully",
+	})
+}
+
+// ForgotPassword handles POST /api/v1/users/forgot-password
+func (h *Handler) ForgotPassword(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req ForgotPasswordRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.ForgotPassword(c.Request().Context(), &ForgotPasswordInput{
+		TraceId: traceID,
+		Email:   req.Email,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// ResetPassword handles POST /api/v1/users/reset-password
+func (h *Handler) ResetPassword(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req ResetPasswordRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.ResetPassword(c.Request().Context(), &ResetPasswordInput{
+		TraceId:     traceID,
+		Token:       req.Token,
+		NewPassword: req.NewPassword,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// SendVerificationEmail handles POST /api/v1/users/send-verification
+func (h *Handler) SendVerificationEmail(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req SendVerificationRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.SendVerificationEmail(c.Request().Context(), &SendVerificationEmailInput{
+		TraceId: traceID,
+		Email:   req.Email,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// VerifyEmail handles POST /api/v1/users/verify-email
+func (h *Handler) VerifyEmail(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req VerifyEmailRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.VerifyEmail(c.Request().Context(), &VerifyEmailInput{
+		TraceId: traceID,
+		Token:   req.Token,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
 	})
 }
 

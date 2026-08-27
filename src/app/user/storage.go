@@ -47,7 +47,7 @@ func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter, stat
 	}
 
 	query := `
-		SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at
+		SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at
 		FROM users
 		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
 		AND ($4 = '' OR status::text = $4)
@@ -123,7 +123,7 @@ func (st *storageTx) InsertUser(ctx context.Context, username, email, fullName, 
 	return id, ErrTypeNone, nil
 }
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
-	query := `	SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE id = $1`
+	query := `	SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -132,8 +132,18 @@ func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 	return user, nil
 }
 
+func (st *storageTx) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)`
+	row := st.tx.QueryRow(ctx, query, email)
+	user, err := convertUserRow(row)
+	if err != nil {
+		return User{}, fmt.Errorf("failed to get user by email: %w", err)
+	}
+	return user, nil
+}
+
 func (st *storageTx) GetUserByUsername(ctx context.Context, username string) (User, error) {
-	query := `	SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE username = $1`
+	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE username = $1`
 	row := st.tx.QueryRow(ctx, query, username)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -212,7 +222,7 @@ func (st *storageTx) GetRecentPasswordHashes(ctx context.Context, userID int, li
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
-	query := `SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
+	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -309,7 +319,7 @@ func convertUserRow(row pgx.Row) (User, error) {
 	var user User
 	var status string
 	var lastLoginAt *time.Time
-	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &lastLoginAt, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &user.EmailVerifiedAt, &lastLoginAt, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return User{}, err
 	}
@@ -384,6 +394,49 @@ func (st *storageTx) DeleteUser(ctx context.Context, id int) error {
 	_, err := st.tx.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) InsertEmailToken(ctx context.Context, userID int, purpose EmailTokenPurpose, tokenHash string, expiresAt time.Time) error {
+	query := `INSERT INTO email_tokens (user_id, purpose, token_hash, expires_at) VALUES ($1, $2, $3, $4)`
+	_, err := st.tx.Exec(ctx, query, userID, purpose, tokenHash, expiresAt)
+	if err != nil {
+		return fmt.Errorf("failed to insert email token: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) GetEmailToken(ctx context.Context, purpose EmailTokenPurpose, tokenHash string) (EmailToken, error) {
+	query := `	SELECT id, user_id, purpose, token_hash, expires_at, used_at, created_at
+	FROM email_tokens
+	WHERE token_hash = $1 AND purpose = $2
+	FOR UPDATE`
+	var t EmailToken
+	err := st.tx.QueryRow(ctx, query, tokenHash, purpose).Scan(
+		&t.Id, &t.UserId, &t.Purpose, &t.TokenHash,
+		&t.ExpiresAt, &t.UsedAt, &t.CreatedAt,
+	)
+	if err != nil {
+		return EmailToken{}, fmt.Errorf("failed to get email token: %w", err)
+	}
+	return t, nil
+}
+
+func (st *storageTx) MarkEmailTokenUsed(ctx context.Context, id int) error {
+	query := `UPDATE email_tokens SET used_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to mark email token used: %w", err)
+	}
+	return nil
+}
+
+func (st *storageTx) UpdateEmailVerified(ctx context.Context, userID int, at time.Time) error {
+	query := `UPDATE users SET email_verified_at = $2, updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, userID, at)
+	if err != nil {
+		return fmt.Errorf("failed to update email verified: %w", err)
 	}
 	return nil
 }

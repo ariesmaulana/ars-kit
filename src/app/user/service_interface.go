@@ -37,6 +37,25 @@ type Service interface {
 	// token was issued at (password change).
 	Refresh(ctx context.Context, input *RefreshInput) *RefreshOutput
 
+	// ForgotPassword emails a password-reset link to the account's email
+	// address. Responds identically whether or not the email exists, so it
+	// cannot be used to enumerate accounts. Sends nothing for unknown emails.
+	ForgotPassword(ctx context.Context, input *ForgotPasswordInput) *ForgotPasswordOutput
+
+	// ResetPassword sets a new password authenticated by a single-use reset
+	// token from the forgot-password email. Invalidates every existing session
+	// (token_version bump + refresh-token revocation).
+	ResetPassword(ctx context.Context, input *ResetPasswordInput) *ResetPasswordOutput
+
+	// SendVerificationEmail emails an email-verification link to the account's
+	// address. Already-verified accounts are a no-op. Like ForgotPassword it
+	// never reveals whether the email exists.
+	SendVerificationEmail(ctx context.Context, input *SendVerificationEmailInput) *SendVerificationEmailOutput
+
+	// VerifyEmail marks the account's email as verified, authenticated by a
+	// single-use verification token from the verification email.
+	VerifyEmail(ctx context.Context, input *VerifyEmailInput) *VerifyEmailOutput
+
 	// Logout revokes the presented refresh token server-side so it cannot be
 	// replayed. It is idempotent: revoking an already-revoked or unknown token
 	// still reports success (the client clears its cookies either way).
@@ -104,6 +123,8 @@ type DemoWorkflowOutput struct {
 type ErrorCode string
 
 const (
+	// ErrorCodeNone is a sentinel for "no error" (success path).
+	ErrorCodeNone ErrorCode = ""
 	// ErrorCodeValidation covers bad input, missing entities, and duplicates.
 	ErrorCodeValidation ErrorCode = "validation"
 	// ErrorCodeUnauthorized covers bad credentials (e.g. wrong password).
@@ -376,4 +397,77 @@ type UpdateUserStatusOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// ForgotPasswordInput is the forgot-password request: just the email.
+type ForgotPasswordInput struct {
+	TraceId string
+	Email   string
+}
+
+// ForgotPasswordOutput is the forgot-password result. It always reports
+// success with a generic message, regardless of whether the email exists, to
+// avoid leaking account existence.
+type ForgotPasswordOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// ResetPasswordInput carries the reset token from the email and the new
+// password.
+type ResetPasswordInput struct {
+	TraceId     string
+	Token       string
+	NewPassword string
+}
+
+// ResetPasswordOutput is the reset-password result.
+type ResetPasswordOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// SendVerificationEmailInput requests a fresh verification email.
+type SendVerificationEmailInput struct {
+	TraceId string
+	Email   string
+}
+
+// SendVerificationEmailOutput reports whether the request was accepted. It
+// does not reveal whether the email exists or was already verified.
+type SendVerificationEmailOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// VerifyEmailInput carries the verification token from the email.
+type VerifyEmailInput struct {
+	TraceId string
+	Token   string
+}
+
+// VerifyEmailOutput is the email-verification result.
+type VerifyEmailOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// EmailConfig groups the configuration the user service needs for
+// forgot-password and email-verification flows. A zero value is usable: an
+// empty AppURL yields a relative link, and a zero TokenExpiry falls back to
+// 24 hours. Email delivery itself is enqueued to the send_email workflow, so
+// the service holds no sender reference.
+type EmailConfig struct {
+	// AppURL is the frontend base URL used to build reset/verify links.
+	AppURL string
+	// TokenExpiry is how long a single-purpose email token stays valid.
+	TokenExpiry time.Duration
 }

@@ -39,6 +39,10 @@ type StorageTx interface {
 	// GetUserByUsername retrieves a user by username
 	GetUserByUsername(ctx context.Context, username string) (User, error)
 
+	// GetUserByEmail retrieves a user by email (case-insensitive). Any error
+	// means the address is unknown.
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+
 	// GetUserPassword retrieves a user's hashed password
 	GetUserPassword(ctx context.Context, id int) (string, error)
 
@@ -119,6 +123,20 @@ type StorageTx interface {
 	// count for pagination. Read-only, like
 	// every other storage access it runs inside the transaction.
 	ListUsers(ctx context.Context, page, size int, filter, status string) ([]User, int, error)
+
+	// InsertEmailToken stores a single-purpose one-time token hash.
+	InsertEmailToken(ctx context.Context, userID int, purpose EmailTokenPurpose, tokenHash string, expiresAt time.Time) error
+
+	// GetEmailToken reads an email token by its hash for the given purpose,
+	// locking it FOR UPDATE. Any error (including pgx.ErrNoRows) means the
+	// token is unknown.
+	GetEmailToken(ctx context.Context, purpose EmailTokenPurpose, tokenHash string) (EmailToken, error)
+
+	// MarkEmailTokenUsed records when a token was consumed.
+	MarkEmailTokenUsed(ctx context.Context, id int) error
+
+	// UpdateEmailVerified sets email_verified_at for the user.
+	UpdateEmailVerified(ctx context.Context, userID int, at time.Time) error
 
 	// Commit commits the transaction
 	Commit() error
