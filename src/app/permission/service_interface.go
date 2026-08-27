@@ -39,6 +39,7 @@ type CheckPermissionOutput struct {
 	Success       bool
 	Message       string
 	TraceId       string
+	ErrorCode     string
 	HasPermission bool
 }
 
@@ -52,9 +53,10 @@ type AssignRoleInput struct {
 }
 
 type AssignRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode string
 }
 
 type UnassignRoleInput struct {
@@ -65,9 +67,10 @@ type UnassignRoleInput struct {
 }
 
 type UnassignRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode string
 }
 
 type AssignPermissionToRoleInput struct {
@@ -79,9 +82,10 @@ type AssignPermissionToRoleInput struct {
 }
 
 type AssignPermissionToRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode string
 }
 
 type RemovePermissionFromRoleInput struct {
@@ -92,7 +96,8 @@ type RemovePermissionFromRoleInput struct {
 }
 
 type RemovePermissionFromRoleOutput struct {
-	Success bool
-	Message string
-	TraceId string
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode string
 }

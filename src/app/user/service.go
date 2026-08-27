@@ -142,16 +142,16 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 			resp.ErrorCode = ErrorCodeValidation
 			return resp
 		}
-		if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
-			log.Err(err).Str("traceId", input.TraceId).Msg("failed to insert password history")
-			resp.Message = "Failed to register user"
-			resp.ErrorCode = ErrorCodeInternal
-			return resp
-		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to insert user")
 		resp.Message = "Failed to register user"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
+	}
+
+	// Record the initial password hash so future change-password reuse checks
+	// cover it. Non-fatal: the user is already created.
+	if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
+		log.Warn().Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
 	}
 
 	data, err := db.GetUserById(ctx, insertedId)
@@ -667,12 +667,10 @@ func (s *service) Logout(ctx context.Context, input *LogoutInput) *LogoutOutput 
 	return resp
 }
 
-// hasPermission reports whether the acting user holds the given permission,
-// which is either an action permission ("user:profile_update") or the super
-// user permission (PermissionSuperUser). The permission module builds the
-// "<user_id>:<permission>" key itself and also grants access to users holding
-// "<user_id>:super_user". It logs and returns false when the permission
-// module cannot confirm it.
+// hasPermission reports whether the acting user holds the permission.
+// Resolution is role-based: one of the user's roles carries the permission,
+// or the user holds the super_user role (wildcard). Returns false on any
+// error, never panics.
 func (s *service) hasPermission(ctx context.Context, traceId string, userID int, perm string) bool {
 	if s.permissionService == nil {
 		log.Warn().Str("traceId", traceId).Int("userId", userID).Str("permission", perm).Msg("Permission service not wired")
@@ -786,6 +784,30 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 }
 
 // UpdatePassword updates a user's password
+// rotatePassword hashes the new password, persists it, records it in
+// password history, bumps the user's token version, and revokes all refresh
+// tokens. Shared by UpdatePassword and ResetPassword; both callers already ran
+// password-history reuse checks.
+func (s *service) rotatePassword(ctx context.Context, db StorageTx, userID int, newPassword string) error {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	if err := db.UpdatePassword(ctx, userID, string(hashed)); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if err := db.InsertPasswordHistory(ctx, userID, string(hashed)); err != nil {
+		return fmt.Errorf("insert password history: %w", err)
+	}
+	if err := db.BumpUserTokenVersion(ctx, userID); err != nil {
+		return fmt.Errorf("bump token version: %w", err)
+	}
+	if err := db.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
+		return fmt.Errorf("revoke refresh tokens: %w", err)
+	}
+	return nil
+}
+
 func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput) *UpdatePasswordOutput {
 	resp := &UpdatePasswordOutput{TraceId: input.TraceId}
 
@@ -877,41 +899,10 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		}
 	}
 
-	// Hash new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to hash new password")
-		resp.Message = "Failed to update password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-
-	// Update password
-	err = db.UpdatePassword(ctx, input.Id, string(hashedPassword))
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update password")
-		resp.Message = err.Error()
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.InsertPasswordHistory(ctx, input.Id, string(hashedPassword)); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to insert password history")
-		resp.Message = "Failed to update password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-
-	// A password change invalidates every session: bump token_version so all
-	// access tokens minted at an earlier version are rejected by the JWT
-	// middleware, and revoke every active refresh token server-side.
-	if err := db.BumpUserTokenVersion(ctx, input.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to bump token version")
-		resp.Message = "Failed to update password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.RevokeAllUserRefreshTokens(ctx, input.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke user refresh tokens")
+	// Hash + persist the new password, record it, bump token_version, and
+	// revoke every active session.
+	if err := s.rotatePassword(ctx, db, input.Id, input.NewPassword); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to rotate password")
 		resp.Message = "Failed to update password"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
@@ -1211,7 +1202,11 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 
@@ -1264,7 +1259,11 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 
@@ -1412,7 +1411,11 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 
@@ -1447,7 +1450,11 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 

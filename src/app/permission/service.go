@@ -25,16 +25,19 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.UserID == 0 {
 		log.Warn().Msg("User ID empty")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission is mandatory")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -42,6 +45,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to check permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -50,6 +54,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission")
 		resp.Message = "Failed to check permission"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -60,6 +65,7 @@ func (s *service) CheckPermission(ctx context.Context, input *CheckPermissionInp
 		if err != nil {
 			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check super user role")
 			resp.Message = "Failed to check permission"
+			resp.ErrorCode = ErrorCodeInternal
 			return resp
 		}
 	}
@@ -80,16 +86,19 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.UserID == 0 {
 		log.Warn().Msg("User ID empty")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == "" {
 		log.Warn().Msg("Role name empty")
 		resp.Message = "Role name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -99,6 +108,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if input.RoleName == RoleSuperUser {
 		log.Warn().Str("traceId", input.TraceId).Int("targetUserId", input.UserID).Msg("Rejected assignment of super_user role")
 		resp.Message = "Cannot assign super_user role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -106,6 +116,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -114,11 +125,13 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role catalog")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !known {
 		log.Warn().Str("role", input.RoleName).Str("traceId", input.TraceId).Msg("Unknown role")
 		resp.Message = "Unknown role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -126,6 +139,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to assign role")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -135,6 +149,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write audit row")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -142,6 +157,7 @@ func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *Assig
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to assign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -159,16 +175,19 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.UserID == 0 {
 		log.Warn().Msg("User ID empty")
 		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == "" {
 		log.Warn().Msg("Role name empty")
 		resp.Message = "Role name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -176,6 +195,7 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -184,18 +204,49 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role catalog")
 		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !known {
 		log.Warn().Str("role", input.RoleName).Str("traceId", input.TraceId).Msg("Unknown role")
 		resp.Message = "Unknown role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
+	}
+
+	if input.RoleName == RoleSuperUser {
+		// If the user holds super_user and is the only holder, removing it
+		// would permanently lock out the system (super_user grants are
+		// blocked, so no recovery path exists).
+		has, err := db.UserHasRole(ctx, input.UserID, input.RoleName)
+		if err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role membership")
+			resp.Message = "Failed to unassign role"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
+		if has {
+			holders, err := db.CountRoleHolders(ctx, input.RoleName)
+			if err != nil {
+				log.Err(err).Str("traceId", input.TraceId).Msg("failed to count role holders")
+				resp.Message = "Failed to unassign role"
+				resp.ErrorCode = ErrorCodeInternal
+				return resp
+			}
+			if holders <= 1 {
+				log.Warn().Str("traceId", input.TraceId).Msg("Refusing to remove the last super_user")
+				resp.Message = "Cannot remove the last super_user role"
+				resp.ErrorCode = ErrorCodeValidation
+				return resp
+			}
+		}
 	}
 
 	err = db.UnassignRole(ctx, input.UserID, input.RoleName)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to unassign role")
 		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -204,6 +255,7 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write audit row")
 		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -211,6 +263,7 @@ func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *U
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to unassign role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -229,21 +282,25 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == "" {
 		log.Warn().Msg("Role name empty")
 		resp.Message = "Role name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == RoleSuperUser {
 		log.Warn().Str("traceId", input.TraceId).Msg("Rejected modification of super_user role")
 		resp.Message = "Cannot modify super_user role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -251,6 +308,7 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -259,11 +317,13 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role catalog")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !known {
 		log.Warn().Str("role", input.RoleName).Str("traceId", input.TraceId).Msg("Unknown role")
 		resp.Message = "Unknown role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -271,11 +331,13 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission catalog")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !registered {
 		log.Warn().Str("permission", input.Permission).Str("traceId", input.TraceId).Msg("Unknown permission")
 		resp.Message = "Unknown permission"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -283,6 +345,7 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to assign permission to role")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -290,6 +353,7 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write audit row")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -297,6 +361,7 @@ func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermi
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to assign permission to role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -314,21 +379,25 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
 		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == "" {
 		log.Warn().Msg("Role name empty")
 		resp.Message = "Role name is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.Permission == "" {
 		log.Warn().Msg("Permission empty")
 		resp.Message = "Permission is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 	if input.RoleName == RoleSuperUser {
 		log.Warn().Str("traceId", input.TraceId).Msg("Rejected modification of super_user role")
 		resp.Message = "Cannot modify super_user role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -336,6 +405,7 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to begin transaction")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -344,11 +414,13 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check role catalog")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !known {
 		log.Warn().Str("role", input.RoleName).Str("traceId", input.TraceId).Msg("Unknown role")
 		resp.Message = "Unknown role"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -356,11 +428,13 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to check permission catalog")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	if !registered {
 		log.Warn().Str("permission", input.Permission).Str("traceId", input.TraceId).Msg("Unknown permission")
 		resp.Message = "Unknown permission"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
@@ -368,6 +442,7 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to remove permission from role")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -375,6 +450,7 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to write audit row")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
@@ -382,6 +458,7 @@ func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePer
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to remove permission from role"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 

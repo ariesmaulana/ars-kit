@@ -40,6 +40,9 @@ type StorageTx interface {
 	// UnassignRole removes the named role from the user.
 	UnassignRole(ctx context.Context, userID int, roleName string) error
 
+	// CountRoleHolders returns the number of users currently holding the named role.
+	CountRoleHolders(ctx context.Context, roleName string) (int, error)
+
 	// InsertPermissionAudit records one assign/revoke entry in the audit
 	// trail, within the caller's transaction. actorID is the acting user;
 	// pass 0 for system-initiated changes (stored as NULL). at is the event

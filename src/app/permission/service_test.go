@@ -471,6 +471,34 @@ func TestUserUnassignRole(t *testing.T) {
 					},
 				})
 			})
+
+			suite.Run(t, "refuses to strip the last super_user", func(t *testing.T, ctx context.Context, app *PermissionApp) {
+				admin := &DataUser{ID: 999}
+				app.Helper.SetUserRole(ctx, t, admin.ID, permission.RoleSuperUser)
+
+				out := app.Service.UnassignRole(ctx, &permission.UnassignRoleInput{
+					TraceId:  "trace-guard",
+					UserID:   admin.ID,
+					RoleName: permission.RoleSuperUser,
+					ActorId:  300,
+				})
+				assert.False(t, out.Success)
+				assert.Equal(t, "Cannot remove the last super_user role", out.Message)
+				assert.Equal(t, permission.ErrorCodeValidation, out.ErrorCode)
+				assert.Contains(t, app.Helper.GetUserRoles(ctx, t, admin.ID), permission.RoleSuperUser)
+
+				// Second holder unblocks removal
+				second := &DataUser{ID: 998}
+				app.Helper.SetUserRole(ctx, t, second.ID, permission.RoleSuperUser)
+				out = app.Service.UnassignRole(ctx, &permission.UnassignRoleInput{
+					TraceId:  "trace-guard",
+					UserID:   admin.ID,
+					RoleName: permission.RoleSuperUser,
+					ActorId:  300,
+				})
+				assert.True(t, out.Success)
+				assert.NotContains(t, app.Helper.GetUserRoles(ctx, t, admin.ID), permission.RoleSuperUser)
+			})
 		})
 	})
 }

@@ -35,25 +35,34 @@ func (s *service) queueEmail(ctx context.Context, traceId string, msg email.Emai
 	}
 }
 
+// emailTokenResult bundles the outputs of validateEmailToken so callers
+// avoid unpacking a 4-tuple.
+type emailTokenResult struct {
+	Token     EmailToken
+	User      User
+	ErrorCode ErrorCode
+	Message   string
+}
+
 // validateEmailToken validates a single-purpose token and returns the
 // resolved token row, the owning user, and an error code + message on failure.
-func (s *service) validateEmailToken(ctx context.Context, db StorageTx, purpose EmailTokenPurpose, token string) (EmailToken, User, ErrorCode, string) {
+func (s *service) validateEmailToken(ctx context.Context, db StorageTx, purpose EmailTokenPurpose, token string) emailTokenResult {
 	hash := s.jwtService.HashRefreshToken(token)
 	t, err := db.GetEmailToken(ctx, purpose, hash)
 	if err != nil {
-		return EmailToken{}, User{}, ErrorCodeValidation, "Invalid or expired token"
+		return emailTokenResult{ErrorCode: ErrorCodeValidation, Message: "Invalid or expired token"}
 	}
 	if t.UsedAt != nil {
-		return EmailToken{}, User{}, ErrorCodeValidation, "Invalid or expired token"
+		return emailTokenResult{ErrorCode: ErrorCodeValidation, Message: "Invalid or expired token"}
 	}
 	if s.clockSource.Now().After(t.ExpiresAt) {
-		return EmailToken{}, User{}, ErrorCodeValidation, "Invalid or expired token"
+		return emailTokenResult{ErrorCode: ErrorCodeValidation, Message: "Invalid or expired token"}
 	}
 	u, err := db.GetUserById(ctx, t.UserId)
 	if err != nil {
-		return EmailToken{}, User{}, ErrorCodeInternal, "Failed to process request"
+		return emailTokenResult{ErrorCode: ErrorCodeInternal, Message: "Failed to process request"}
 	}
-	return t, u, ErrorCodeNone, ""
+	return emailTokenResult{Token: t, User: u}
 }
 
 // generateAndStoreToken generates a new opaque token, stores its hash, and
@@ -204,14 +213,14 @@ func (s *service) ResetPassword(ctx context.Context, input *ResetPasswordInput) 
 	}
 	defer db.Rollback()
 
-	t, u, code, msg := s.validateEmailToken(ctx, db, EmailTokenPurposePasswordReset, input.Token)
-	if msg != "" {
-		resp.Message = msg
-		resp.ErrorCode = code
+	tokenResult := s.validateEmailToken(ctx, db, EmailTokenPurposePasswordReset, input.Token)
+	if tokenResult.Message != "" {
+		resp.Message = tokenResult.Message
+		resp.ErrorCode = tokenResult.ErrorCode
 		return resp
 	}
 
-	recentHashes, err := db.GetRecentPasswordHashes(ctx, u.Id, passwordHistoryDepth)
+	recentHashes, err := db.GetRecentPasswordHashes(ctx, tokenResult.User.Id, passwordHistoryDepth)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to fetch password history")
 		resp.Message = "Failed to reset password"
@@ -226,39 +235,13 @@ func (s *service) ResetPassword(ctx context.Context, input *ResetPasswordInput) 
 		}
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("failed to hash password")
+	if err := s.rotatePassword(ctx, db, tokenResult.User.Id, input.NewPassword); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to rotate password")
 		resp.Message = "Failed to reset password"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
-
-	if err := db.UpdatePassword(ctx, u.Id, string(hashedPassword)); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("failed to update password")
-		resp.Message = "Failed to reset password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.InsertPasswordHistory(ctx, u.Id, string(hashedPassword)); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
-		resp.Message = "Failed to reset password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.BumpUserTokenVersion(ctx, u.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("failed to bump token version")
-		resp.Message = "Failed to reset password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.RevokeAllUserRefreshTokens(ctx, u.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("failed to revoke refresh tokens")
-		resp.Message = "Failed to reset password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.MarkEmailTokenUsed(ctx, t.Id); err != nil {
+	if err := db.MarkEmailTokenUsed(ctx, tokenResult.Token.Id); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to mark reset token used")
 		resp.Message = "Failed to reset password"
 		resp.ErrorCode = ErrorCodeInternal
@@ -274,7 +257,7 @@ func (s *service) ResetPassword(ctx context.Context, input *ResetPasswordInput) 
 
 	log.Info().
 		Str("traceId", input.TraceId).
-		Int("userId", u.Id).
+		Int("userId", tokenResult.User.Id).
 		Msg("password reset successfully")
 	resp.Success = true
 	resp.Message = "Password reset successfully"
@@ -382,20 +365,20 @@ func (s *service) VerifyEmail(ctx context.Context, input *VerifyEmailInput) *Ver
 	}
 	defer db.Rollback()
 
-	t, _, code, msg := s.validateEmailToken(ctx, db, EmailTokenPurposeEmailVerification, input.Token)
-	if msg != "" {
-		resp.Message = msg
-		resp.ErrorCode = code
+	tokenResult := s.validateEmailToken(ctx, db, EmailTokenPurposeEmailVerification, input.Token)
+	if tokenResult.Message != "" {
+		resp.Message = tokenResult.Message
+		resp.ErrorCode = tokenResult.ErrorCode
 		return resp
 	}
 
-	if err := db.UpdateEmailVerified(ctx, t.UserId, s.clockSource.Now()); err != nil {
+	if err := db.UpdateEmailVerified(ctx, tokenResult.Token.UserId, s.clockSource.Now()); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to mark email verified")
 		resp.Message = "Failed to verify email"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
-	if err := db.MarkEmailTokenUsed(ctx, t.Id); err != nil {
+	if err := db.MarkEmailTokenUsed(ctx, tokenResult.Token.Id); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to mark token used")
 		resp.Message = "Failed to verify email"
 		resp.ErrorCode = ErrorCodeInternal
@@ -411,7 +394,7 @@ func (s *service) VerifyEmail(ctx context.Context, input *VerifyEmailInput) *Ver
 
 	log.Info().
 		Str("traceId", input.TraceId).
-		Int("userId", t.UserId).
+		Int("userId", tokenResult.Token.UserId).
 		Msg("email verified")
 	resp.Success = true
 	resp.Message = "Email verified successfully"

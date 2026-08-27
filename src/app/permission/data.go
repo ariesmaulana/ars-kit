@@ -22,6 +22,15 @@ const (
 // context and the permission column.
 const auditTargetRoleScope = 0
 
+// Error codes returned on every permission output, mirroring the user
+// module's contract: validation -> client error (400), internal -> system
+// failure (500). Empty string means success.
+const (
+	ErrorCodeNone       = ""
+	ErrorCodeValidation = "validation"
+	ErrorCodeInternal   = "internal"
+)
+
 // Role is one entry of the roles table.
 type Role struct {
 	Id        int

@@ -105,6 +105,20 @@ func (st *storageTx) UnassignRole(ctx context.Context, userID int, roleName stri
 	return nil
 }
 
+func (st *storageTx) CountRoleHolders(ctx context.Context, roleName string) (int, error) {
+	var count int
+	err := st.tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM user_roles ur
+		 JOIN roles r ON r.id = ur.role_id
+		 WHERE r.name = $1`,
+		roleName,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count role holders: %w", err)
+	}
+	return count, nil
+}
+
 func (st *storageTx) PermissionExists(ctx context.Context, permission string) (bool, error) {
 	var exists bool
 	err := st.tx.QueryRow(ctx,
