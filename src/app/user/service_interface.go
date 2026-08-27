@@ -244,13 +244,15 @@ type GetProfileByIdOutput struct {
 	User      User
 }
 
-// ListUsersInput lists users (admin). ActorId must hold super_user.
+// ListUsersInput lists users (admin). ActorId must hold super_user. Status
+// optionally filters by account status (empty = any).
 type ListUsersInput struct {
 	TraceId string
 	ActorId int
 	Page    int
 	Size    int
 	Filter  string
+	Status  UserStatus
 }
 
 // ListUsersOutput is the paginated admin user list.

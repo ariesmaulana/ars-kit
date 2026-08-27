@@ -27,7 +27,7 @@ func NewStorage(pool *pgxpool.Pool) Storage {
 	}
 }
 
-func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter string) ([]User, int, error) {
+func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter, status string) ([]User, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -39,9 +39,10 @@ func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter strin
 	countQuery := `
 		SELECT count(*) FROM users
 		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+		AND ($2 = '' OR status::text = $2)
 	`
 	var total int
-	if err := st.tx.QueryRow(ctx, countQuery, filter).Scan(&total); err != nil {
+	if err := st.tx.QueryRow(ctx, countQuery, filter, status).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count users: %w", err)
 	}
 
@@ -49,10 +50,11 @@ func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter strin
 		SELECT id, username, email, full_name, status, last_login_at, created_at, updated_at
 		FROM users
 		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+		AND ($4 = '' OR status::text = $4)
 		ORDER BY id
 		LIMIT $2 OFFSET $3
 	`
-	rows, err := st.tx.Query(ctx, query, filter, size, offset)
+	rows, err := st.tx.Query(ctx, query, filter, size, offset, status)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list users: %w", err)
 	}

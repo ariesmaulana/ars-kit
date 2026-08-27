@@ -932,8 +932,8 @@ func (h *Handler) UpdateUserStatus(c echo.Context) error {
 
 // ListUsers handles GET /api/v1/users
 // @Summary List users
-// @Description List users with pagination and an optional username/email
-// @Description filter. Requires the super_user permission.
+// @Description List users with pagination and optional username/email filter
+// @Description and account-status filter. Requires the super_user permission.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -941,6 +941,7 @@ func (h *Handler) UpdateUserStatus(c echo.Context) error {
 // @Param page query int false "Page (1-based, default 1)"
 // @Param size query int false "Page size (default 10)"
 // @Param q query string false "Filter by username or email substring"
+// @Param status query string false "Filter by status: active, disabled, suspended"
 // @Success 200 {object} UserListResponse
 // @Failure 401 {object} UserListResponse
 // @Failure 403 {object} UserListResponse
@@ -960,6 +961,7 @@ func (h *Handler) ListUsers(c echo.Context) error {
 	page, _ := strconv.Atoi(c.QueryParam("page"))
 	size, _ := strconv.Atoi(c.QueryParam("size"))
 	filter := c.QueryParam("q")
+	status := c.QueryParam("status")
 
 	output := h.service.ListUsers(c.Request().Context(), &ListUsersInput{
 		TraceId: traceID,
@@ -967,6 +969,7 @@ func (h *Handler) ListUsers(c echo.Context) error {
 		Page:    page,
 		Size:    size,
 		Filter:  filter,
+		Status:  UserStatus(status),
 	})
 
 	if !output.Success {
