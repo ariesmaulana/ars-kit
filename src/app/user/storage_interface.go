@@ -115,9 +115,10 @@ type StorageTx interface {
 	DeleteUser(ctx context.Context, id int) error
 
 	// ListUsers returns a page of users matching an optional filter (username
-	// or email substring) plus the total count for pagination. Read-only, like
+	// or email substring) and an optional status (empty = any), plus the total
+	// count for pagination. Read-only, like
 	// every other storage access it runs inside the transaction.
-	ListUsers(ctx context.Context, page, size int, filter string) ([]User, int, error)
+	ListUsers(ctx context.Context, page, size int, filter, status string) ([]User, int, error)
 
 	// Commit commits the transaction
 	Commit() error

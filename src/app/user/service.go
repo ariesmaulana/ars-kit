@@ -1000,6 +1000,15 @@ func (s *service) ListUsers(ctx context.Context, input *ListUsersInput) *ListUse
 	if size < 1 {
 		size = 10
 	}
+	switch input.Status {
+	case "", UserStatusActive, UserStatusDisabled, UserStatusSuspended:
+		// known filter value (or no filter)
+	default:
+		log.Warn().Str("status", string(input.Status)).Msg("Unknown status filter")
+		resp.Message = "Invalid status filter"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
 
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
@@ -1010,7 +1019,7 @@ func (s *service) ListUsers(ctx context.Context, input *ListUsersInput) *ListUse
 	}
 	defer db.Rollback()
 
-	users, total, err := db.ListUsers(ctx, page, size, input.Filter)
+	users, total, err := db.ListUsers(ctx, page, size, input.Filter, string(input.Status))
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to list users")
 		resp.Message = "Failed to list users"
