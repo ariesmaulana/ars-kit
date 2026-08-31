@@ -744,7 +744,7 @@ func TestHandlerUnassignRole_Success(t *testing.T) {
 
 	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{
@@ -762,7 +762,7 @@ func TestHandlerUnassignRole_Success(t *testing.T) {
 	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.True(t, resp.Success)
-	assert.Equal(t, "Permission revoked successfully", resp.Message)
+	assert.Equal(t, "Role unassigned successfully", resp.Message)
 }
 
 func TestHandlerUnassignRole_InputsPassedToService(t *testing.T) {
@@ -770,7 +770,7 @@ func TestHandlerUnassignRole_InputsPassedToService(t *testing.T) {
 
 	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{

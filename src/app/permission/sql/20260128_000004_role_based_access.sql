@@ -50,13 +50,3 @@ INSERT INTO permissions (permission) VALUES ('default') ON CONFLICT DO NOTHING;
 DROP TABLE IF EXISTS user_permissions;
 
 -- +goose Down
-CREATE TABLE IF NOT EXISTS user_permissions (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    permission VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE (user_id, permission)
-);
-DROP TABLE IF EXISTS role_permissions;
-DROP TABLE IF EXISTS user_roles;
-DROP TABLE IF EXISTS roles;

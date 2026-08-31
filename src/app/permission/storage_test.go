@@ -45,11 +45,11 @@ func TestStorageRoleQueries(t *testing.T) {
 				for _, sc := range scenarios {
 					tx, err := app.Storage.BeginTx(ctx)
 					assert.Nil(t, err, sc.name)
-					defer tx.Rollback()
 
 					has, err := tx.UserHasPermission(ctx, sc.userID, sc.permission)
 					assert.Nil(t, err, sc.name)
 					assert.Equal(t, sc.expected, has, sc.name)
+					assert.Nil(t, tx.Rollback(), sc.name)
 				}
 			})
 
@@ -68,11 +68,11 @@ func TestStorageRoleQueries(t *testing.T) {
 				for _, sc := range scenarios {
 					tx, err := app.Storage.BeginTx(ctx)
 					assert.Nil(t, err, sc.name)
-					defer tx.Rollback()
 
 					has, err := tx.UserHasRole(ctx, sc.userID, sc.roleName)
 					assert.Nil(t, err, sc.name)
 					assert.Equal(t, sc.expected, has, sc.name)
+					assert.Nil(t, tx.Rollback(), sc.name)
 				}
 			})
 

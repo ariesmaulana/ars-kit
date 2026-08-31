@@ -148,6 +148,13 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 		return resp
 	}
 
+	if insertedId <= 0 {
+		log.Error().Str("traceId", input.TraceId).Int("insertedId", insertedId).Msg("user insert reported success without a valid id")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	// Record the initial password hash so future change-password reuse checks
 	// cover it. Non-fatal: the user is already created.
 	if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
