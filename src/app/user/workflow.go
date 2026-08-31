@@ -144,8 +144,8 @@ func (s *service) GrantPermissionSystem(ctx context.Context, input *workflow.Gra
 		out.ErrorCode = workflow.ErrorCodeValidation
 		return out
 	}
-	if input.Permission == "" {
-		out.Message = "Permission is mandatory"
+	if input.RoleName == "" {
+		out.Message = "Role name is mandatory"
 		out.ErrorCode = workflow.ErrorCodeValidation
 		return out
 	}
@@ -156,10 +156,10 @@ func (s *service) GrantPermissionSystem(ctx context.Context, input *workflow.Gra
 		return out
 	}
 
-	output := s.permissionService.GrantPermission(ctx, &permission.GrantPermissionInput{
-		TraceId:    input.TraceId,
-		UserID:     int(input.UserID),
-		Permission: input.Permission,
+	output := s.permissionService.AssignRole(ctx, &permission.AssignRoleInput{
+		TraceId:  input.TraceId,
+		UserID:   int(input.UserID),
+		RoleName: input.RoleName,
 	})
 	if !output.Success {
 		out.Message = output.Message
@@ -170,10 +170,10 @@ func (s *service) GrantPermissionSystem(ctx context.Context, input *workflow.Gra
 	log.Info().
 		Str("traceId", input.TraceId).
 		Int64("userId", input.UserID).
-		Str("permission", input.Permission).
-		Msg("Permission granted by workflow")
+		Str("role", input.RoleName).
+		Msg("Role assigned by workflow")
 
 	out.Success = true
-	out.Message = "Permission granted"
+	out.Message = "Role assigned"
 	return out
 }

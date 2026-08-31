@@ -87,6 +87,17 @@ ars-kit/
 
 - Go, Echo v4, PostgreSQL (pgx/v5), Goose (migrations), Zerolog, Swagger
 
+## Security
+
+### CSRF stance
+
+Auth cookies are `HttpOnly` + `SameSite=Strict` (+ `Secure` in production).
+Because `SameSite=Strict` cookies are never attached to cross-site requests,
+browser-based CSRF is not a practical attack against this API and **CSRF
+tokens are intentionally not used**. Revisit this decision before serving
+the API to non-Strict clients (e.g. if cookies move to `SameSite=Lax/None`,
+or if a legacy browser target requires it).
+
 ## License
 
 Not specified

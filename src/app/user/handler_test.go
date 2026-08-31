@@ -612,22 +612,22 @@ func TestHandlerUpdatePassword_NoTokenReturns401(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// POST /api/v1/users/permissions/grant
+// POST /api/v1/users/roles/assign
 // ──────────────────────────────────────────────────────────────
 
-func TestHandlerGrantPermission_Success(t *testing.T) {
+func TestHandlerAssignRole_Success(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+	fake.AssignRoleReturns(&user.AssignRoleOutput{
 		Success: true,
-		Message: "Permission granted successfully",
+		Message: "Role assigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/assign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -635,51 +635,51 @@ func TestHandlerGrantPermission_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.True(t, resp.Success)
-	assert.Equal(t, "Permission granted successfully", resp.Message)
+	assert.Equal(t, "Role assigned successfully", resp.Message)
 }
 
-func TestHandlerGrantPermission_InputsPassedToService(t *testing.T) {
+func TestHandlerAssignRole_InputsPassedToService(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+	fake.AssignRoleReturns(&user.AssignRoleOutput{
 		Success: true,
-		Message: "Permission granted successfully",
+		Message: "Role assigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    11,
-		"permission": "user:profile_update",
+		"user_id": 11,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/assign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	_, input := fake.GrantPermissionArgsForCall(0)
-	assert.Equal(t, 7, input.ActorId)                        // from JWT
-	assert.Equal(t, 11, input.TargetUserId)                  // from body
-	assert.Equal(t, "user:profile_update", input.Permission) // from body
+	_, input := fake.AssignRoleArgsForCall(0)
+	assert.Equal(t, 7, input.ActorId)         // from JWT
+	assert.Equal(t, 11, input.TargetUserId)   // from body
+	assert.Equal(t, "member", input.RoleName) // from body
 }
 
-func TestHandlerGrantPermission_ServiceFailReturns403(t *testing.T) {
+func TestHandlerAssignRole_ServiceFailReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+	fake.AssignRoleReturns(&user.AssignRoleOutput{
 		Success:   false,
-		Message:   "Unauthorized: only super user can grant permissions",
+		Message:   "Unauthorized: only super user can assign roles",
 		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/assign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -687,26 +687,26 @@ func TestHandlerGrantPermission_ServiceFailReturns403(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.False(t, resp.Success)
-	assert.Equal(t, "Unauthorized: only super user can grant permissions", resp.Message)
+	assert.Equal(t, "Unauthorized: only super user can assign roles", resp.Message)
 }
 
-func TestHandlerGrantPermission_ValidationFailReturns400(t *testing.T) {
+func TestHandlerAssignRole_ValidationFailReturns400(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.GrantPermissionReturns(&user.GrantPermissionOutput{
+	fake.AssignRoleReturns(&user.AssignRoleOutput{
 		Success:   false,
 		Message:   "Target user ID is mandatory",
 		ErrorCode: user.ErrorCodeValidation,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    0,
-		"permission": "user:profile_update",
+		"user_id": 0,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/assign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -714,20 +714,20 @@ func TestHandlerGrantPermission_ValidationFailReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.False(t, resp.Success)
 	assert.Equal(t, "Target user ID is mandatory", resp.Message)
 }
 
-func TestHandlerGrantPermission_NoTokenReturns401(t *testing.T) {
+func TestHandlerAssignRole_NoTokenReturns401(t *testing.T) {
 	e, _ := newHandlerSetup()
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/grant", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/assign", body)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
@@ -736,22 +736,22 @@ func TestHandlerGrantPermission_NoTokenReturns401(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// POST /api/v1/users/permissions/revoke
+// POST /api/v1/users/roles/unassign
 // ──────────────────────────────────────────────────────────────
 
-func TestHandlerRevokePermission_Success(t *testing.T) {
+func TestHandlerUnassignRole_Success(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/unassign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -759,51 +759,51 @@ func TestHandlerRevokePermission_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.True(t, resp.Success)
-	assert.Equal(t, "Permission revoked successfully", resp.Message)
+	assert.Equal(t, "Role unassigned successfully", resp.Message)
 }
 
-func TestHandlerRevokePermission_InputsPassedToService(t *testing.T) {
+func TestHandlerUnassignRole_InputsPassedToService(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    11,
-		"permission": "user:profile_update",
+		"user_id": 11,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/unassign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	_, input := fake.RevokePermissionArgsForCall(0)
-	assert.Equal(t, 7, input.ActorId)                        // from JWT
-	assert.Equal(t, 11, input.TargetUserId)                  // from body
-	assert.Equal(t, "user:profile_update", input.Permission) // from body
+	_, input := fake.UnassignRoleArgsForCall(0)
+	assert.Equal(t, 7, input.ActorId)         // from JWT
+	assert.Equal(t, 11, input.TargetUserId)   // from body
+	assert.Equal(t, "member", input.RoleName) // from body
 }
 
-func TestHandlerRevokePermission_ServiceFailReturns403(t *testing.T) {
+func TestHandlerUnassignRole_ServiceFailReturns403(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success:   false,
 		Message:   "Unauthorized: only super user can revoke permissions",
 		ErrorCode: user.ErrorCodeForbidden,
 	})
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/unassign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -811,16 +811,16 @@ func TestHandlerRevokePermission_ServiceFailReturns403(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.False(t, resp.Success)
 	assert.Equal(t, "Unauthorized: only super user can revoke permissions", resp.Message)
 }
 
-func TestHandlerRevokePermission_ValidationFailReturns400(t *testing.T) {
+func TestHandlerUnassignRole_ValidationFailReturns400(t *testing.T) {
 	e, fake := newHandlerSetup()
 
-	fake.RevokePermissionReturns(&user.RevokePermissionOutput{
+	fake.UnassignRoleReturns(&user.UnassignRoleOutput{
 		Success:   false,
 		Message:   "Permission is mandatory",
 		ErrorCode: user.ErrorCodeValidation,
@@ -830,7 +830,7 @@ func TestHandlerRevokePermission_ValidationFailReturns400(t *testing.T) {
 		"user_id":    2,
 		"permission": "",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/unassign", body)
 	req.Header.Set(echo.HeaderAuthorization, bearerToken(1))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
@@ -838,20 +838,20 @@ func TestHandlerRevokePermission_ValidationFailReturns400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-	var resp user.ManagePermissionResponse
+	var resp user.ManageRoleResponse
 	decodeJSON(t, rec, &resp)
 	assert.False(t, resp.Success)
 	assert.Equal(t, "Permission is mandatory", resp.Message)
 }
 
-func TestHandlerRevokePermission_NoTokenReturns401(t *testing.T) {
+func TestHandlerUnassignRole_NoTokenReturns401(t *testing.T) {
 	e, _ := newHandlerSetup()
 
 	body := jsonBody(t, map[string]interface{}{
-		"user_id":    2,
-		"permission": "user:profile_update",
+		"user_id": 2,
+		"role":    "member",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/permissions/revoke", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/roles/unassign", body)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)

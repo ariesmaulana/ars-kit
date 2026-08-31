@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +97,10 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	public.POST("/login", h.Login)
 	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
+	public.POST("/forgot-password", h.ForgotPassword)
+	public.POST("/reset-password", h.ResetPassword)
+	public.POST("/send-verification", h.SendVerificationEmail)
+	public.POST("/verify-email", h.VerifyEmail)
 
 	// Protected routes
 	protected := users.Group("")
@@ -103,8 +108,16 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
 	protected.PUT("/profile/password", h.UpdatePassword)
-	protected.POST("/permissions/grant", h.GrantPermission)
-	protected.POST("/permissions/revoke", h.RevokePermission)
+	protected.POST("/roles/assign", h.AssignRole)
+	protected.POST("/roles/unassign", h.UnassignRole)
+	protected.POST("/roles/permissions/grant", h.AssignPermissionToRole)
+	protected.POST("/roles/permissions/revoke", h.RemovePermissionFromRole)
+
+	// Admin routes (super_user-gated inside the service)
+	protected.GET("", h.ListUsers)
+	protected.GET("/:id", h.GetUser)
+	protected.PUT("/:id/status", h.UpdateUserStatus)
+	protected.DELETE("/:id", h.DeleteUser)
 }
 
 // HTTP Request/Response structs
@@ -129,6 +142,37 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+// ForgotPasswordRequest represents the HTTP request body for forgot-password.
+type ForgotPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// ResetPasswordRequest represents the HTTP request body for resetting a
+// password using the token emailed by forgot-password.
+type ResetPasswordRequest struct {
+	Token       string `json:"token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+
+// SendVerificationRequest represents the HTTP request body for requesting a
+// verification email.
+type SendVerificationRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// VerifyEmailRequest represents the HTTP request body for verifying an email
+// using the token emailed after sign-up.
+type VerifyEmailRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+
+// MessageResponse is a success/message envelope for actions that return no
+// data (forgot-password, reset-password, email verification).
+type MessageResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // UpdateUsernameRequest represents the HTTP request body for updating username
 type UpdateUsernameRequest struct {
 	NewUsername string `json:"new_username" validate:"required,min=3,max=50"`
@@ -138,6 +182,12 @@ type UpdateUsernameRequest struct {
 type UpdatePasswordRequest struct {
 	OldPassword string `json:"old_password" validate:"required"`
 	NewPassword string `json:"new_password" validate:"required,min=6"`
+}
+
+// UpdateUserStatusRequest represents the HTTP request body for setting a
+// user's status. Values: "active", "disabled", "suspended".
+type UpdateUserStatusRequest struct {
+	Status string `json:"status" validate:"required"`
 }
 
 // UserDTO represents a user in HTTP responses (without password)
@@ -445,6 +495,131 @@ func (h *Handler) Logout(c echo.Context) error {
 	})
 }
 
+// ForgotPassword handles POST /api/v1/users/forgot-password
+func (h *Handler) ForgotPassword(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req ForgotPasswordRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.ForgotPassword(c.Request().Context(), &ForgotPasswordInput{
+		TraceId: traceID,
+		Email:   req.Email,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// ResetPassword handles POST /api/v1/users/reset-password
+func (h *Handler) ResetPassword(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req ResetPasswordRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.ResetPassword(c.Request().Context(), &ResetPasswordInput{
+		TraceId:     traceID,
+		Token:       req.Token,
+		NewPassword: req.NewPassword,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// SendVerificationEmail handles POST /api/v1/users/send-verification
+func (h *Handler) SendVerificationEmail(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req SendVerificationRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.SendVerificationEmail(c.Request().Context(), &SendVerificationEmailInput{
+		TraceId: traceID,
+		Email:   req.Email,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// VerifyEmail handles POST /api/v1/users/verify-email
+func (h *Handler) VerifyEmail(c echo.Context) error {
+	traceID := xid.New().String()
+
+	var req VerifyEmailRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, MessageResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.VerifyEmail(c.Request().Context(), &VerifyEmailInput{
+		TraceId: traceID,
+		Token:   req.Token,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), MessageResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, MessageResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
 // Profile handles GET /api/v1/users/profile
 // @Summary Get user profile
 // @Description Get the authenticated user's profile
@@ -597,121 +772,488 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	})
 }
 
-// ManagePermissionRequest represents the HTTP request body for granting/revoking a permission
-type ManagePermissionRequest struct {
+// ManageRoleRequest represents the HTTP request body for assigning/unassigning a role
+type ManageRoleRequest struct {
 	TargetUserId int    `json:"user_id" validate:"required"`
-	Permission   string `json:"permission" validate:"required"`
+	RoleName     string `json:"role" validate:"required"`
 }
 
-// ManagePermissionResponse represents the HTTP response for granting/revoking a permission
-type ManagePermissionResponse struct {
+// ManageRoleResponse represents the HTTP response for assigning/unassigning a role
+type ManageRoleResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// GrantPermission handles POST /api/v1/users/permissions/grant
-// @Summary Grant permission
-// @Description Grant a permission string to a target user. Only super user may do this.
+// AssignRole handles POST /api/v1/users/roles/assign
+// @Summary Assign role
+// @Description Assign a role to a target user. Only super user may do this.
+// @Description Bootstrap-only roles (super_user) are refused.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param permission body ManagePermissionRequest true "Permission grant data"
-// @Success 200 {object} ManagePermissionResponse
-// @Failure 400 {object} ManagePermissionResponse
-// @Failure 401 {object} ManagePermissionResponse
-// @Failure 403 {object} ManagePermissionResponse
-// @Failure 500 {object} ManagePermissionResponse
-// @Router /api/v1/users/permissions/grant [post]
-func (h *Handler) GrantPermission(c echo.Context) error {
+// @Param role body ManageRoleRequest true "Role assignment data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/assign [post]
+func (h *Handler) AssignRole(c echo.Context) error {
 	traceID := xid.New().String()
 
 	actorID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
 	}
 
-	var req ManagePermissionRequest
+	var req ManageRoleRequest
 	if err := bindJSON(c, &req); err != nil {
 		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
 	}
 
-	output := h.service.GrantPermission(c.Request().Context(), &GrantPermissionInput{
+	output := h.service.AssignRole(c.Request().Context(), &AssignRoleInput{
 		TraceId:      traceID,
 		ActorId:      actorID,
 		TargetUserId: req.TargetUserId,
-		Permission:   req.Permission,
+		RoleName:     req.RoleName,
 	})
 
 	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	return c.JSON(http.StatusOK, ManagePermissionResponse{
+	return c.JSON(http.StatusOK, ManageRoleResponse{
 		Success: true,
 		Message: output.Message,
 	})
 }
 
-// RevokePermission handles POST /api/v1/users/permissions/revoke
-// @Summary Revoke permission
-// @Description Revoke a permission from a target user. Only superuser may do this.
+// UnassignRole handles POST /api/v1/users/roles/unassign
+// @Summary Unassign role
+// @Description Remove a role from a target user. Only super user may do this.
 // @Tags users
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body ManagePermissionRequest true "Permission revoke data"
-// @Success 200 {object} ManagePermissionResponse
-// @Failure 400 {object} ManagePermissionResponse
-// @Failure 401 {object} ManagePermissionResponse
-// @Failure 403 {object} ManagePermissionResponse
-// @Failure 500 {object} ManagePermissionResponse
-// @Router /api/v1/users/permissions/revoke [post]
-func (h *Handler) RevokePermission(c echo.Context) error {
+// @Param body body ManageRoleRequest true "Role removal data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/unassign [post]
+func (h *Handler) UnassignRole(c echo.Context) error {
 	traceID := xid.New().String()
 
 	actorID, err := GetUserIdFromContext(c)
 	if err != nil {
-		return c.JSON(http.StatusUnauthorized, ManagePermissionResponse{
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
 			Success: false,
 			Message: "User not authenticated",
 		})
 	}
 
-	var req ManagePermissionRequest
+	var req ManageRoleRequest
 	if err := bindJSON(c, &req); err != nil {
 		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, ManagePermissionResponse{
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
 			Success: false,
 			Message: "Invalid request body",
 		})
 	}
 
-	output := h.service.RevokePermission(c.Request().Context(), &RevokePermissionInput{
+	output := h.service.UnassignRole(c.Request().Context(), &UnassignRoleInput{
 		TraceId:      traceID,
 		ActorId:      actorID,
 		TargetUserId: req.TargetUserId,
-		Permission:   req.Permission,
+		RoleName:     req.RoleName,
 	})
 
 	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), ManagePermissionResponse{
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
 			Success: false,
 			Message: output.Message,
 		})
 	}
 
-	return c.JSON(http.StatusOK, ManagePermissionResponse{
+	return c.JSON(http.StatusOK, ManageRoleResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// ManageRolePermissionRequest represents the HTTP request body for
+// granting/revoking a permission on a role.
+type ManageRolePermissionRequest struct {
+	RoleName   string `json:"role" validate:"required"`
+	Permission string `json:"permission" validate:"required"`
+}
+
+// AssignPermissionToRole handles POST /api/v1/users/roles/permissions/grant
+// @Summary Grant a permission to a role
+// @Description Add a catalog-registered permission to a role. Only super user
+// @Description may do this; the super_user role cannot be modified.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ManageRolePermissionRequest true "Role permission grant data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/permissions/grant [post]
+func (h *Handler) AssignPermissionToRole(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req ManageRolePermissionRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.AssignPermissionToRole(c.Request().Context(), &AssignPermissionToRoleInput{
+		TraceId:    traceID,
+		ActorId:    actorID,
+		RoleName:   req.RoleName,
+		Permission: req.Permission,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ManageRoleResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// RemovePermissionFromRole handles POST /api/v1/users/roles/permissions/revoke
+// @Summary Revoke a permission from a role
+// @Description Remove a permission from a role. Only super user may do this;
+// @Description the super_user role cannot be modified.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body ManageRolePermissionRequest true "Role permission revoke data"
+// @Success 200 {object} ManageRoleResponse
+// @Failure 400 {object} ManageRoleResponse
+// @Failure 401 {object} ManageRoleResponse
+// @Failure 403 {object} ManageRoleResponse
+// @Failure 500 {object} ManageRoleResponse
+// @Router /api/v1/users/roles/permissions/revoke [post]
+func (h *Handler) RemovePermissionFromRole(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, ManageRoleResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	var req ManageRolePermissionRequest
+	if err := bindJSON(c, &req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, ManageRoleResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+
+	output := h.service.RemovePermissionFromRole(c.Request().Context(), &RemovePermissionFromRoleInput{
+		TraceId:    traceID,
+		ActorId:    actorID,
+		RoleName:   req.RoleName,
+		Permission: req.Permission,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), ManageRoleResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, ManageRoleResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// UserListResponse is the HTTP response for listing users.
+type UserListResponse struct {
+	Success    bool               `json:"success"`
+	Message    string             `json:"message"`
+	Data       []UserDTO          `json:"data,omitempty"`
+	Pagination PaginationResponse `json:"pagination,omitempty"`
+}
+
+// UpdateUserStatus handles PUT /api/v1/users/:id/status
+// @Summary Update a user's status
+// @Description Set a user's status to active, disabled, or suspended. Requires
+// @Description the super_user permission. Disabling or suspending also revokes
+// @Description all the target's active refresh tokens.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Param body body UpdateUserStatusRequest true "New status"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 404 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id}/status [put]
+func (h *Handler) UpdateUserStatus(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	req := new(UpdateUserStatusRequest)
+	if err := bindJSON(c, req); err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid request body",
+		})
+	}
+	if req.Status == "" {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Status is mandatory",
+		})
+	}
+
+	output := h.service.UpdateUserStatus(c.Request().Context(), &UpdateUserStatusInput{
+		TraceId:      traceID,
+		ActorId:      actorID,
+		TargetUserId: id,
+		Status:       UserStatus(req.Status),
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: output.Message,
+	})
+}
+
+// ListUsers handles GET /api/v1/users
+// @Summary List users
+// @Description List users with pagination and optional username/email filter
+// @Description and account-status filter. Requires the super_user permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page (1-based, default 1)"
+// @Param size query int false "Page size (default 10)"
+// @Param q query string false "Filter by username or email substring"
+// @Param status query string false "Filter by status: active, disabled, suspended"
+// @Success 200 {object} UserListResponse
+// @Failure 401 {object} UserListResponse
+// @Failure 403 {object} UserListResponse
+// @Failure 500 {object} UserListResponse
+// @Router /api/v1/users [get]
+func (h *Handler) ListUsers(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserListResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	size, _ := strconv.Atoi(c.QueryParam("size"))
+	filter := c.QueryParam("q")
+	status := c.QueryParam("status")
+
+	output := h.service.ListUsers(c.Request().Context(), &ListUsersInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Page:    page,
+		Size:    size,
+		Filter:  filter,
+		Status:  UserStatus(status),
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserListResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	users := make([]UserDTO, 0, len(output.Users))
+	for _, u := range output.Users {
+		users = append(users, toUserDTO(u))
+	}
+
+	return c.JSON(http.StatusOK, UserListResponse{
+		Success:    true,
+		Message:    output.Message,
+		Data:       users,
+		Pagination: PaginationResponse{Page: output.Page, PageSize: output.Size, Total: output.Total},
+	})
+}
+
+// GetUser handles GET /api/v1/users/:id
+// @Summary Get a user by id
+// @Description Fetch any user by id. Requires the super_user permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id} [get]
+func (h *Handler) GetUser(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	output := h.service.GetUser(c.Request().Context(), &GetUserInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Id:      id,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, UserResponse{
+		Success: true,
+		Message: output.Message,
+		Data:    &dto,
+	})
+}
+
+// DeleteUser handles DELETE /api/v1/users/:id
+// @Summary Delete a user
+// @Description Hard-delete a user (GDPR erasure). Requires the super_user
+// @Description permission.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "User ID"
+// @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 403 {object} UserResponse
+// @Failure 500 {object} UserResponse
+// @Router /api/v1/users/{id} [delete]
+func (h *Handler) DeleteUser(c echo.Context) error {
+	traceID := xid.New().String()
+
+	actorID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, UserResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, UserResponse{
+			Success: false,
+			Message: "Invalid user id",
+		})
+	}
+
+	output := h.service.DeleteUser(c.Request().Context(), &DeleteUserInput{
+		TraceId: traceID,
+		ActorId: actorID,
+		Id:      id,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), UserResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: output.Message,
 	})

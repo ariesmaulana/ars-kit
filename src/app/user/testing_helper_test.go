@@ -2,10 +2,14 @@ package user_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
@@ -25,28 +29,38 @@ func NewTestHelper(pool *pgxpool.Pool) *TestHelper {
 
 // DataUser represents a user fixture for testing
 type DataUser struct {
-	Idx      int // Index in the fixture array
-	Id       int // Actual database ID (populated after insert)
-	Username string
-	Email    string
-	FullName string
-	Password string // Plain text password for testing
+	Idx         int // Index in the fixture array
+	Id          int // Actual database ID (populated after insert)
+	Username    string
+	Email       string
+	FullName    string
+	Password    string // Plain text password for testing
+	Status      user.UserStatus
+	LastLoginAt *time.Time // Pre-existing last login (nil = never logged in)
 }
 
 // InsertUser inserts a single user and returns it
-func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, email, fullName, password string) *user.User {
+func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, email, fullName, password string, status ...user.UserStatus) *user.User {
 	query := `
-		INSERT INTO users (username, email, full_name, password, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
-		RETURNING id, username, email, full_name, created_at, updated_at
+		INSERT INTO users (username, email, full_name, password, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		RETURNING id, username, email, full_name, status, created_at, updated_at
 	`
 
 	var u user.User
-	err := h.pool.QueryRow(ctx, query, username, email, fullName, password).Scan(
+	userStatus := user.UserStatusActive
+	if len(status) > 0 && status[0] != "" {
+		userStatus = status[0]
+	}
+	if userStatus == "" {
+		userStatus = user.UserStatusActive
+	}
+	err := h.pool.QueryRow(ctx, query, username, email, fullName, password, userStatus).Scan(
 		&u.Id,
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -56,12 +70,12 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 }
 
 // InsertUserWithHashedPassword inserts a user with a plain text password that gets hashed
-func (h *TestHelper) InsertUserWithHashedPassword(ctx context.Context, t *testing.T, username, email, fullName, plainPassword string) *user.User {
+func (h *TestHelper) InsertUserWithHashedPassword(ctx context.Context, t *testing.T, username, email, fullName, plainPassword string, status ...user.UserStatus) *user.User {
 	// Hash the password using bcrypt
 	hashedPassword, err := hashPassword(plainPassword)
 	assert.Nil(t, err, "Failed to hash password")
 
-	return h.InsertUser(ctx, t, username, email, fullName, hashedPassword)
+	return h.InsertUser(ctx, t, username, email, fullName, hashedPassword, status...)
 }
 
 // hashPassword hashes a plain text password using bcrypt
@@ -80,7 +94,7 @@ func (h *TestHelper) InsertUsers(ctx context.Context, t *testing.T, users []User
 	result := make([]*user.User, 0, len(users))
 
 	for _, fixture := range users {
-		u := h.InsertUser(ctx, t, fixture.Username, fixture.Email, fixture.FullName, fixture.Password)
+		u := h.InsertUser(ctx, t, fixture.Username, fixture.Email, fixture.FullName, fixture.Password, fixture.Status)
 		result = append(result, u)
 	}
 
@@ -93,6 +107,7 @@ type UserFixture struct {
 	Email    string
 	FullName string
 	Password string
+	Status   user.UserStatus
 }
 
 // ClearUsers removes all users from the database
@@ -104,7 +119,7 @@ func (h *TestHelper) ClearUsers(ctx context.Context, t *testing.T) {
 // GetUserById retrieves a user by ID
 func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -115,6 +130,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -126,7 +142,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 // GetUserByUsername retrieves a user by username
 func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, username string) *user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -137,6 +153,7 @@ func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, userna
 		&u.Username,
 		&u.Email,
 		&u.FullName,
+		&u.Status,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -165,7 +182,7 @@ func (h *TestHelper) CountUsers(ctx context.Context, t *testing.T) int {
 // GetAllUsers retrieves all users as a map indexed by user ID
 func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user.User {
 	query := `
-		SELECT id, username, email, full_name, created_at, updated_at
+		SELECT id, username, email, full_name, status, created_at, updated_at
 		FROM users
 		ORDER BY id
 	`
@@ -182,6 +199,7 @@ func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user
 			&u.Username,
 			&u.Email,
 			&u.FullName,
+			&u.Status,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		)
@@ -250,39 +268,39 @@ func createFailedPermissionCheck() *permission.CheckPermissionOutput {
 	}
 }
 
-// createSuccessfulGrant returns a mock result where the permission module
-// granted the permission.
-func createSuccessfulGrant() *permission.GrantPermissionOutput {
-	return &permission.GrantPermissionOutput{
+// createSuccessfulAssign returns a mock result where the permission module
+// assigned the role.
+func createSuccessfulAssign() *permission.AssignRoleOutput {
+	return &permission.AssignRoleOutput{
 		Success: true,
-		Message: "Permission granted successfully",
+		Message: "Role assigned successfully",
 	}
 }
 
-// createFailedGrant returns a mock result where the permission module failed
-// to grant the permission.
-func createFailedGrant() *permission.GrantPermissionOutput {
-	return &permission.GrantPermissionOutput{
+// createFailedAssign returns a mock result where the permission module failed
+// to assign the role.
+func createFailedAssign() *permission.AssignRoleOutput {
+	return &permission.AssignRoleOutput{
 		Success: false,
-		Message: "Failed to grant permission",
+		Message: "Failed to assign role",
 	}
 }
 
-// createSuccessfulRevoke returns a mock result where the permission module
-// revoked the permission.
-func createSuccessfulRevoke() *permission.RevokePermissionOutput {
-	return &permission.RevokePermissionOutput{
+// createSuccessfulUnassign returns a mock result where the permission module
+// removed the role.
+func createSuccessfulUnassign() *permission.UnassignRoleOutput {
+	return &permission.UnassignRoleOutput{
 		Success: true,
-		Message: "Permission revoked successfully",
+		Message: "Role unassigned successfully",
 	}
 }
 
-// createFailedRevoke returns a mock result where the permission module failed
-// to revoke the permission.
-func createFailedRevoke() *permission.RevokePermissionOutput {
-	return &permission.RevokePermissionOutput{
+// createFailedUnassign returns a mock result where the permission module
+// failed to remove the role.
+func createFailedUnassign() *permission.UnassignRoleOutput {
+	return &permission.UnassignRoleOutput{
 		Success: false,
-		Message: "Failed to revoke permission",
+		Message: "Failed to unassign role",
 	}
 }
 
@@ -292,6 +310,18 @@ func (h *TestHelper) CountRefreshTokens(ctx context.Context, t *testing.T, userI
 	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", userID).Scan(&count)
 	assert.Nil(t, err)
 	return count
+}
+
+// InsertActiveRefreshToken inserts one active (non-revoked) refresh token row
+// for a user so session-revocation behavior is observable in tests.
+func (h *TestHelper) InsertActiveRefreshToken(ctx context.Context, t *testing.T, userID int) {
+	// token_hash is globally UNIQUE and scenarios share one database.
+	hash := fmt.Sprintf("active-token-%d-%d", userID, time.Now().UnixNano())
+	_, err := h.pool.Exec(ctx,
+		`INSERT INTO refresh_tokens (user_id, token_hash, token_version, expires_at) VALUES ($1, $2, 1, NOW() + INTERVAL '24 hours')`,
+		userID, hash,
+	)
+	assert.Nil(t, err)
 }
 
 // CountActiveRefreshTokens returns the number of non-revoked refresh token rows
@@ -320,4 +350,22 @@ func (h *TestHelper) GetUserTokenVersion(ctx context.Context, t *testing.T, user
 	err := h.pool.QueryRow(ctx, "SELECT token_version FROM users WHERE id = $1", userID).Scan(&version)
 	assert.Nil(t, err)
 	return version
+}
+
+// SetLastLoginAt writes last_login_at directly, simulating a previous login.
+func (h *TestHelper) SetLastLoginAt(ctx context.Context, t *testing.T, id int, at time.Time) {
+	_, err := h.pool.Exec(ctx, "UPDATE users SET last_login_at = $1 WHERE id = $2", at, id)
+	assert.Nil(t, err)
+}
+
+// GetLastLoginAt reads the persisted last_login_at for a user. It returns nil
+// when the column is still NULL (e.g. the user has never logged in) or when
+// the user does not exist.
+func (h *TestHelper) GetLastLoginAt(ctx context.Context, t *testing.T, id int) *time.Time {
+	var lastLoginAt *time.Time
+	err := h.pool.QueryRow(ctx, "SELECT last_login_at FROM users WHERE id = $1", id).Scan(&lastLoginAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		assert.Nil(t, err)
+	}
+	return lastLoginAt
 }

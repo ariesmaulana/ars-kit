@@ -23,6 +23,7 @@ Rules:
 - Version prefix is a Unix timestamp (`YYYYMMDDHHmmss`) — generated automatically by `make migrate-create`
 - Name must be `snake_case`
 - Files are applied in ascending version order (oldest timestamp first)
+- Never use goose down, we choose one flow, so if we want to revert or drop something that already implement, we create a new forward migration that undoes it.
 
 **Why timestamps instead of sequential numbers?**
 

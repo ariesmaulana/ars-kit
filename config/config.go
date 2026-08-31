@@ -51,6 +51,8 @@ type Config struct {
 
 	// Email notification (foundation module)
 	EmailProvider string // "smtp" (default), "resend", "brevo"
+	AppURL        string // frontend base URL for email links (e.g. "http://localhost:3000")
+	EmailTokenExpiryHours int // hours a reset/verify token stays valid (default: 24)
 	SMTPHost      string // default: smtp.gmail.com
 	SMTPPort      int    // default: 587
 	SMTPUsername  string // required if provider=smtp
@@ -152,6 +154,11 @@ func InitConfig() (*Config, error) {
 
 	// Email notification
 	cfg.EmailProvider = getEnvOrDefault("EMAIL_PROVIDER", envs, "")
+	cfg.AppURL = getEnvOrDefault("APP_URL", envs, "http://localhost:3000")
+	cfg.EmailTokenExpiryHours, err = parseIntEnv("EMAIL_TOKEN_EXPIRY_HOURS", envs, 24)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	cfg.SMTPHost = getEnvOrDefault("SMTP_HOST", envs, "smtp.gmail.com")
 	cfg.SMTPPort, err = parseIntEnv("SMTP_PORT", envs, 587)
 	if err != nil {

@@ -2,10 +2,14 @@ basePath: /
 definitions:
   user.AuthResponse:
     properties:
+      locked_until:
+        type: string
       message:
         type: string
       refresh_token:
         type: string
+      retry_after_seconds:
+        type: integer
       success:
         type: boolean
       token:
@@ -23,22 +27,43 @@ definitions:
     - password
     - username
     type: object
-  user.ManagePermissionRequest:
+  user.ManageRolePermissionRequest:
     properties:
       permission:
+        type: string
+      role:
+        type: string
+    required:
+    - permission
+    - role
+    type: object
+  user.ManageRoleRequest:
+    properties:
+      role:
         type: string
       user_id:
         type: integer
     required:
-    - permission
+    - role
     - user_id
     type: object
-  user.ManagePermissionResponse:
+  user.ManageRoleResponse:
     properties:
       message:
         type: string
       success:
         type: boolean
+    type: object
+  user.PaginationResponse:
+    properties:
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
     type: object
   user.RefreshRequest:
     properties:
@@ -64,13 +89,6 @@ definitions:
     - password
     - username
     type: object
-  user.UpdateEmailRequest:
-    properties:
-      new_email:
-        type: string
-    required:
-    - new_email
-    type: object
   user.UpdatePasswordRequest:
     properties:
       new_password:
@@ -82,12 +100,12 @@ definitions:
     - new_password
     - old_password
     type: object
-  user.UpdateProfileRequest:
+  user.UpdateUserStatusRequest:
     properties:
-      full_name:
+      status:
         type: string
     required:
-    - full_name
+    - status
     type: object
   user.UpdateUsernameRequest:
     properties:
@@ -113,6 +131,19 @@ definitions:
       username:
         type: string
     type: object
+  user.UserListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/user.UserDTO'
+        type: array
+      message:
+        type: string
+      pagination:
+        $ref: '#/definitions/user.PaginationResponse'
+      success:
+        type: boolean
+    type: object
   user.UserResponse:
     properties:
       data:
@@ -129,6 +160,181 @@ info:
   title: Monthly Expense API
   version: "1.0"
 paths:
+  /api/v1/users:
+    get:
+      consumes:
+      - application/json
+      description: |-
+        List users with pagination and an optional username/email
+        filter. Requires the super_user permission.
+      parameters:
+      - description: Page (1-based, default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 10)
+        in: query
+        name: size
+        type: integer
+      - description: Filter by username or email substring
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserListResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserListResponse'
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - users
+  /api/v1/users/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Hard-delete a user (GDPR erasure). Requires the super_user
+        permission.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a user
+      tags:
+      - users
+    get:
+      consumes:
+      - application/json
+      description: Fetch any user by id. Requires the super_user permission.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Get a user by id
+      tags:
+      - users
+  /api/v1/users/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Set a user's status to active, disabled, or suspended. Requires
+        the super_user permission. Disabling or suspending also revokes
+        all the target's active refresh tokens.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.UpdateUserStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+      security:
+      - BearerAuth: []
+      summary: Update a user's status
+      tags:
+      - users
   /api/v1/users/login:
     post:
       consumes:
@@ -187,87 +393,6 @@ paths:
       summary: Logout user
       tags:
       - users
-  /api/v1/users/permissions/grant:
-    post:
-      consumes:
-      - application/json
-      description: Grant a permission string to a target user. Only super user may
-        do this.
-      parameters:
-      - description: Permission grant data
-        in: body
-        name: permission
-        required: true
-        schema:
-          $ref: '#/definitions/user.ManagePermissionRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-      security:
-      - BearerAuth: []
-      summary: Grant permission
-      tags:
-      - users
-  /api/v1/users/permissions/revoke:
-    post:
-      consumes:
-      - application/json
-      description: Revoke a permission from a target user. Only superuser may do this.
-      parameters:
-      - description: Permission revoke data
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/user.ManagePermissionRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/user.ManagePermissionResponse'
-      security:
-      - BearerAuth: []
-      summary: Revoke permission
-      tags:
-      - users
   /api/v1/users/profile:
     get:
       consumes:
@@ -295,91 +420,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get user profile
-      tags:
-      - users
-    put:
-      consumes:
-      - application/json
-      description: Update the authenticated user's profile fields (full_name)
-      parameters:
-      - description: Profile update data
-        in: body
-        name: profile
-        required: true
-        schema:
-          $ref: '#/definitions/user.UpdateProfileRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-      security:
-      - BearerAuth: []
-      summary: Update profile
-      tags:
-      - users
-  /api/v1/users/profile/email:
-    put:
-      consumes:
-      - application/json
-      description: |-
-        Change the authenticated user's email address. Returns 409 if
-        the address is already in use.
-      parameters:
-      - description: New email
-        in: body
-        name: email
-        required: true
-        schema:
-          $ref: '#/definitions/user.UpdateEmailRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/user.UserResponse'
-      security:
-      - BearerAuth: []
-      summary: Update email
       tags:
       - users
   /api/v1/users/profile/password:
@@ -560,6 +600,172 @@ paths:
           schema:
             $ref: '#/definitions/user.AuthResponse'
       summary: Register a user asynchronously via the workflow engine
+      tags:
+      - users
+  /api/v1/users/roles/assign:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Assign a role to a target user. Only super user may do this.
+        Bootstrap-only roles (super_user) are refused.
+      parameters:
+      - description: Role assignment data
+        in: body
+        name: role
+        required: true
+        schema:
+          $ref: '#/definitions/user.ManageRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+      security:
+      - BearerAuth: []
+      summary: Assign role
+      tags:
+      - users
+  /api/v1/users/roles/permissions/grant:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Add a catalog-registered permission to a role. Only super user
+        may do this; the super_user role cannot be modified.
+      parameters:
+      - description: Role permission grant data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ManageRolePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+      security:
+      - BearerAuth: []
+      summary: Grant a permission to a role
+      tags:
+      - users
+  /api/v1/users/roles/permissions/revoke:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Remove a permission from a role. Only super user may do this;
+        the super_user role cannot be modified.
+      parameters:
+      - description: Role permission revoke data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ManageRolePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke a permission from a role
+      tags:
+      - users
+  /api/v1/users/roles/unassign:
+    post:
+      consumes:
+      - application/json
+      description: Remove a role from a target user. Only super user may do this.
+      parameters:
+      - description: Role removal data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/user.ManageRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.ManageRoleResponse'
+      security:
+      - BearerAuth: []
+      summary: Unassign role
       tags:
       - users
 schemes:

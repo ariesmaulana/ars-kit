@@ -140,11 +140,17 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 		MaxFailedAttempts: conf.LoginMaxFailedAttempts,
 		FailedWindow:      time.Duration(conf.LoginFailedWindowMinutes) * time.Minute,
 		LockoutDuration:   time.Duration(conf.LoginLockoutMinutes) * time.Minute,
-	}, jwtService)
+	}, jwtService, user.EmailConfig{
+		AppURL:      conf.AppURL,
+		TokenExpiry: time.Duration(conf.EmailTokenExpiryHours) * time.Hour,
+	})
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
-	workflowEngine.Register(workflow.DemoWorkflow(userService))
+	workflowEngine.Register(
+		workflow.DemoWorkflow(userService),
+		workflow.SendEmailWorkflow(emailSender),
+	)
 	workflow.SetDefault(workflowEngine)
 
 	return &App{

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 )
 
 // Compile-time check to ensure service implements Service interface
@@ -46,23 +47,40 @@ type service struct {
 	permissionService permission.Service
 	throttle          LoginThrottleConfig
 	jwtService        *JWTService
+	clockSource       clock.Source
+	emailCfg          EmailConfig
 }
+
+// defaultEmailTokenExpiry is used when EmailConfig.TokenExpiry is zero.
+const defaultEmailTokenExpiry = 24 * time.Hour
+
+const (
+	minPasswordLength      = 12
+	passwordHistoryDepth   = 5
+	passwordPolicyErrorMsg = "Password must be at least 12 characters long"
+)
 
 // NewService creates a new user service instance. A zero LoginThrottleConfig
 // falls back to DefaultLoginThrottleConfig so callers that omit the policy
 // still get a sane lockout instead of locking every account after one failure.
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
-// server-side.
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService) Service {
+// server-side. emailCfg wires the email flows (forgot-password, verification).
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
+	}
+	var cs clock.Source = clock.Real()
+	if len(clockSource) > 0 && clockSource[0] != nil {
+		cs = clockSource[0]
 	}
 	return &service{
 		storage:           storage,
 		permissionService: permissionService,
 		throttle:          throttle,
 		jwtService:        jwtService,
+		clockSource:       cs,
+		emailCfg:          emailCfg,
 	}
 }
 
@@ -81,7 +99,7 @@ func (s *service) issueTokenPair(ctx context.Context, db StorageTx, tokenVersion
 		return "", "", fmt.Errorf("generate refresh token: %w", err)
 	}
 
-	expiresAt := time.Now().Add(s.jwtService.RefreshExpiration())
+	expiresAt := s.clockSource.Now().Add(s.jwtService.RefreshExpiration())
 	if err := db.InsertRefreshToken(ctx, user.Id, s.jwtService.HashRefreshToken(refreshToken), tokenVersion, expiresAt); err != nil {
 		return "", "", fmt.Errorf("persist refresh token: %w", err)
 	}
@@ -128,6 +146,19 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 		resp.Message = "Failed to register user"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
+	}
+
+	if insertedId <= 0 {
+		log.Error().Str("traceId", input.TraceId).Int("insertedId", insertedId).Msg("user insert reported success without a valid id")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Record the initial password hash so future change-password reuse checks
+	// cover it. Non-fatal: the user is already created.
+	if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
+		log.Warn().Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
 	}
 
 	data, err := db.GetUserById(ctx, insertedId)
@@ -202,9 +233,9 @@ func validateRegisterInput(input *RegisterInput) string {
 		log.Warn().Msg("Password empty")
 		return "Password is mandatory"
 	}
-	if len(input.Password) < 7 {
+	if len(input.Password) < minPasswordLength {
 		log.Warn().Msg("Password too short")
-		return "Password must be at least 7 characters long"
+		return passwordPolicyErrorMsg
 	}
 	if input.FullName == "" {
 		log.Warn().Msg("FullName empty")
@@ -261,6 +292,16 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		resp.ErrorCode = ErrorCodeUnauthorized
 		return resp
 	}
+	if user.Status != UserStatusActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Str("username", input.Username).
+			Str("status", string(user.Status)).
+			Msg("Login blocked: account disabled")
+		resp.Message = "Account disabled"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
 
 	// Lock the row for the rest of the login attempt. Serializing attempts per
 	// account makes the failed-attempt counter updates atomic and prevents a
@@ -282,7 +323,7 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
-	now := time.Now().UTC()
+	now := s.clockSource.Now().UTC()
 
 	// Reject while locked without comparing the password or counting the
 	// attempt: brute-force attempts must not burn CPU or extend the lock.
@@ -357,6 +398,16 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 		return resp
 	}
 
+	// Stamp last login for audit/traceability. Runs in the same transaction as
+	// the login so it commits atomically with the issued token.
+	lastLogin := s.clockSource.Now().UTC()
+	if err := db.UpdateLastLogin(ctx, user.Id, lastLogin); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update last login")
+		resp.Message = "Failed to login"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
 	log.Info().
 		Str("traceId", input.TraceId).
 		Str("username", input.Username).
@@ -393,6 +444,9 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 	resp.Success = true
 	resp.Message = "Login successful"
 	resp.User = user
+	// Reflect the just-stamped login time on the returned user so callers
+	// (and tests) see it without a second lookup.
+	resp.User.LastLoginAt = &lastLogin
 
 	return resp
 }
@@ -474,7 +528,7 @@ func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutp
 		return resp
 	}
 
-	if time.Now().After(rt.ExpiresAt) {
+	if s.clockSource.Now().After(rt.ExpiresAt) {
 		log.Info().
 			Str("traceId", input.TraceId).
 			Int("refreshTokenId", rt.Id).
@@ -620,12 +674,10 @@ func (s *service) Logout(ctx context.Context, input *LogoutInput) *LogoutOutput 
 	return resp
 }
 
-// hasPermission reports whether the acting user holds the given permission,
-// which is either an action permission ("user:profile_update") or the super
-// user permission (PermissionSuperUser). The permission module builds the
-// "<user_id>:<permission>" key itself and also grants access to users holding
-// "<user_id>:super_user". It logs and returns false when the permission
-// module cannot confirm it.
+// hasPermission reports whether the acting user holds the permission.
+// Resolution is role-based: one of the user's roles carries the permission,
+// or the user holds the super_user role (wildcard). Returns false on any
+// error, never panics.
 func (s *service) hasPermission(ctx context.Context, traceId string, userID int, perm string) bool {
 	if s.permissionService == nil {
 		log.Warn().Str("traceId", traceId).Int("userId", userID).Str("permission", perm).Msg("Permission service not wired")
@@ -739,6 +791,30 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 }
 
 // UpdatePassword updates a user's password
+// rotatePassword hashes the new password, persists it, records it in
+// password history, bumps the user's token version, and revokes all refresh
+// tokens. Shared by UpdatePassword and ResetPassword; both callers already ran
+// password-history reuse checks.
+func (s *service) rotatePassword(ctx context.Context, db StorageTx, userID int, newPassword string) error {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	if err := db.UpdatePassword(ctx, userID, string(hashed)); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if err := db.InsertPasswordHistory(ctx, userID, string(hashed)); err != nil {
+		return fmt.Errorf("insert password history: %w", err)
+	}
+	if err := db.BumpUserTokenVersion(ctx, userID); err != nil {
+		return fmt.Errorf("bump token version: %w", err)
+	}
+	if err := db.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
+		return fmt.Errorf("revoke refresh tokens: %w", err)
+	}
+	return nil
+}
+
 func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput) *UpdatePasswordOutput {
 	resp := &UpdatePasswordOutput{TraceId: input.TraceId}
 
@@ -757,9 +833,9 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		return resp
 	}
 
-	if len(input.NewPassword) < 7 {
+	if len(input.NewPassword) < minPasswordLength {
 		log.Warn().Msg("New password too short")
-		resp.Message = "Password must be at least 7 characters long"
+		resp.Message = passwordPolicyErrorMsg
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -815,36 +891,25 @@ func (s *service) UpdatePassword(ctx context.Context, input *UpdatePasswordInput
 		resp.ErrorCode = ErrorCodeUnauthorized
 		return resp
 	}
-
-	// Hash new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+	recentHashes, err := db.GetRecentPasswordHashes(ctx, input.Id, passwordHistoryDepth)
 	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to hash new password")
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to fetch password history")
 		resp.Message = "Failed to update password"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
-
-	// Update password
-	err = db.UpdatePassword(ctx, input.Id, string(hashedPassword))
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update password")
-		resp.Message = err.Error()
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
+	for _, oldHash := range recentHashes {
+		if bcrypt.CompareHashAndPassword([]byte(oldHash), []byte(input.NewPassword)) == nil {
+			resp.Message = "New password must be different from recent passwords"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
 	}
 
-	// A password change invalidates every session: bump token_version so all
-	// access tokens minted at an earlier version are rejected by the JWT
-	// middleware, and revoke every active refresh token server-side.
-	if err := db.BumpUserTokenVersion(ctx, input.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to bump token version")
-		resp.Message = "Failed to update password"
-		resp.ErrorCode = ErrorCodeInternal
-		return resp
-	}
-	if err := db.RevokeAllUserRefreshTokens(ctx, input.Id); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke user refresh tokens")
+	// Hash + persist the new password, record it, bump token_version, and
+	// revoke every active session.
+	if err := s.rotatePassword(ctx, db, input.Id, input.NewPassword); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to rotate password")
 		resp.Message = "Failed to update password"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
@@ -908,10 +973,202 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	return resp
 }
 
-// GrantPermission assigns a permission to a target user.
-// Only an actor holding the "<actorId>:super_user" permission may do this.
-func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInput) *GrantPermissionOutput {
-	resp := &GrantPermissionOutput{TraceId: input.TraceId}
+// ListUsers lists users for an admin. The actor must hold the super_user
+// permission; without it the call is rejected before any query runs.
+func (s *service) ListUsers(ctx context.Context, input *ListUsersInput) *ListUsersOutput {
+	resp := &ListUsersOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can list users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	page, size := input.Page, input.Size
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 10
+	}
+	switch input.Status {
+	case "", UserStatusActive, UserStatusDisabled, UserStatusSuspended:
+		// known filter value (or no filter)
+	default:
+		log.Warn().Str("status", string(input.Status)).Msg("Unknown status filter")
+		resp.Message = "Invalid status filter"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to list users"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	users, total, err := db.ListUsers(ctx, page, size, input.Filter, string(input.Status))
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to list users")
+		resp.Message = "Failed to list users"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Users retrieved successfully"
+	resp.Users = users
+	resp.Total = total
+	resp.Page = page
+	resp.Size = size
+	return resp
+}
+
+// GetUser fetches any user by id for an admin. The actor must hold the
+// super_user permission.
+func (s *service) GetUser(ctx context.Context, input *GetUserInput) *GetUserOutput {
+	resp := &GetUserOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can view users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to fetch user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	user, err := db.GetUserById(ctx, input.Id)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Int("id", input.Id).Msg("User not found")
+		resp.Message = "User not found"
+		resp.ErrorCode = ErrorCodeNotFound
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "User retrieved successfully"
+	resp.User = user
+	return resp
+}
+
+// DeleteUser hard-deletes a user for an admin (GDPR erasure). The actor must
+// hold the super_user permission. Refresh tokens cascade via the foreign key.
+func (s *service) DeleteUser(ctx context.Context, input *DeleteUserInput) *DeleteUserOutput {
+	resp := &DeleteUserOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can delete users"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	_, errType, err := db.LockUserById(ctx, input.Id)
+	if errType == ErrTypeNotFound {
+		log.Info().Str("traceId", input.TraceId).Int("id", input.Id).Msg("User not found; treating delete as successful no-op")
+		resp.Success = true
+		resp.Message = "User deleted successfully"
+		return resp
+	}
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.DeleteUser(ctx, input.Id); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to delete user")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to delete user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().Str("traceId", input.TraceId).Int("id", input.Id).Msg("User deleted successfully")
+
+	resp.Success = true
+	resp.Message = "User deleted successfully"
+	return resp
+}
+
+// AssignRole assigns a role to a target user.
+// Only an actor holding super_user may do this. Bootstrap-only roles
+// (super_user itself) are refused by the permission service (P0-13).
+func (s *service) AssignRole(ctx context.Context, input *AssignRoleInput) *AssignRoleOutput {
+	resp := &AssignRoleOutput{TraceId: input.TraceId}
 
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
@@ -931,9 +1188,9 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.Permission == "" {
-		log.Warn().Msg("Permission empty")
-		resp.Message = "Permission is mandatory"
+	if input.RoleName == "" {
+		log.Warn().Msg("Role name empty")
+		resp.Message = "Role name is mandatory"
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -944,26 +1201,31 @@ func (s *service) GrantPermission(ctx context.Context, input *GrantPermissionInp
 		return resp
 	}
 
-	output := s.permissionService.GrantPermission(ctx, &permission.GrantPermissionInput{
-		TraceId:    input.TraceId,
-		UserID:     input.TargetUserId,
-		Permission: input.Permission,
+	output := s.permissionService.AssignRole(ctx, &permission.AssignRoleInput{
+		TraceId:  input.TraceId,
+		UserID:   input.TargetUserId,
+		RoleName: input.RoleName,
+		ActorId:  input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 
 	resp.Success = true
-	resp.Message = "Permission granted successfully"
+	resp.Message = "Role assigned successfully"
 	return resp
 }
 
-// RevokePermission removes a permission from a target user.
-// Only the *holding the <actorId>:super_user permission may do this.
-func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionInput) *RevokePermissionOutput {
-	resp := &RevokePermissionOutput{TraceId: input.TraceId}
+// UnassignRole removes a role from a target user.
+// Only an actor holding super_user may do this.
+func (s *service) UnassignRole(ctx context.Context, input *UnassignRoleInput) *UnassignRoleOutput {
+	resp := &UnassignRoleOutput{TraceId: input.TraceId}
 
 	if input.TraceId == "" {
 		log.Warn().Msg("TraceId empty")
@@ -983,9 +1245,9 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-	if input.Permission == "" {
-		log.Warn().Msg("Permission empty")
-		resp.Message = "Permission is mandatory"
+	if input.RoleName == "" {
+		log.Warn().Msg("Role name empty")
+		resp.Message = "Role name is mandatory"
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
@@ -996,18 +1258,232 @@ func (s *service) RevokePermission(ctx context.Context, input *RevokePermissionI
 		return resp
 	}
 
-	output := s.permissionService.RevokePermission(ctx, &permission.RevokePermissionInput{
-		TraceId:    input.TraceId,
-		UserID:     input.TargetUserId,
-		Permission: input.Permission,
+	output := s.permissionService.UnassignRole(ctx, &permission.UnassignRoleInput{
+		TraceId:  input.TraceId,
+		UserID:   input.TargetUserId,
+		RoleName: input.RoleName,
+		ActorId:  input.ActorId,
 	})
 	if !output.Success {
 		resp.Message = output.Message
-		resp.ErrorCode = ErrorCodeInternal
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
 		return resp
 	}
 
 	resp.Success = true
-	resp.Message = "Permission revoked successfully"
+	resp.Message = "Role unassigned successfully"
 	return resp
+}
+
+// UpdateUserStatus sets a target user's status (admin). Only an actor holding
+// the "<actorId>:super_user" permission may do this. Disabling or suspending
+// the target also revokes all their active refresh tokens in the same
+// transaction, so existing sessions die immediately. An actor cannot disable
+// or suspend their own account.
+func (s *service) UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput {
+	resp := &UpdateUserStatusOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == 0 {
+		log.Warn().Msg("Actor ID empty")
+		resp.Message = "Actor ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.TargetUserId == 0 {
+		log.Warn().Msg("Target user ID empty")
+		resp.Message = "Target user ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Status == "" {
+		log.Warn().Msg("Status empty")
+		resp.Message = "Status is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	switch input.Status {
+	case UserStatusActive, UserStatusDisabled, UserStatusSuspended:
+		// known status
+	default:
+		log.Warn().Str("status", string(input.Status)).Msg("Unknown user status")
+		resp.Message = "Invalid status"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.ActorId == input.TargetUserId && input.Status != UserStatusActive {
+		log.Warn().Int("actorId", input.ActorId).Msg("Actor attempted to disable own account")
+		resp.Message = "Cannot disable your own account"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can update user status"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	_, errType, err := db.LockUserById(ctx, input.TargetUserId)
+	if errType == ErrTypeNotFound {
+		log.Info().Str("traceId", input.TraceId).Int("id", input.TargetUserId).Msg("User not found")
+		resp.Message = "User not found"
+		resp.ErrorCode = ErrorCodeNotFound
+		return resp
+	}
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.UpdateUserStatus(ctx, input.TargetUserId, input.Status); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update user status")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// A non-active status must kill existing sessions immediately.
+	if input.Status != UserStatusActive {
+		if err := db.RevokeAllUserRefreshTokens(ctx, input.TargetUserId); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Msg("Failed to revoke refresh tokens")
+			resp.Message = "Failed to update user status"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
+		}
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit")
+		resp.Message = "Failed to update user status"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	log.Info().
+		Str("traceId", input.TraceId).
+		Int("targetUserId", input.TargetUserId).
+		Str("status", string(input.Status)).
+		Msg("User status updated successfully")
+
+	resp.Success = true
+	resp.Message = "User status updated successfully"
+	return resp
+}
+
+// AssignPermissionToRole adds a permission to a role's meaning. Only an
+// actor holding super_user may do this; the permission module enforces the
+// catalog and refuses to touch the super_user role.
+func (s *service) AssignPermissionToRole(ctx context.Context, input *AssignPermissionToRoleInput) *AssignPermissionToRoleOutput {
+	resp := &AssignPermissionToRoleOutput{TraceId: input.TraceId}
+
+	if msg := s.validateRolePermissionInput(input.TraceId, input.ActorId, input.RoleName, input.Permission); msg != "" {
+		log.Warn().Msg(msg)
+		resp.Message = msg
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can manage role permissions"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	output := s.permissionService.AssignPermissionToRole(ctx, &permission.AssignPermissionToRoleInput{
+		TraceId:    input.TraceId,
+		RoleName:   input.RoleName,
+		Permission: input.Permission,
+		ActorId:    input.ActorId,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = output.Message
+	return resp
+}
+
+// RemovePermissionFromRole removes a permission from a role's meaning.
+// Same gating and rules as AssignPermissionToRole.
+func (s *service) RemovePermissionFromRole(ctx context.Context, input *RemovePermissionFromRoleInput) *RemovePermissionFromRoleOutput {
+	resp := &RemovePermissionFromRoleOutput{TraceId: input.TraceId}
+
+	if msg := s.validateRolePermissionInput(input.TraceId, input.ActorId, input.RoleName, input.Permission); msg != "" {
+		log.Warn().Msg(msg)
+		resp.Message = msg
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	if !s.hasPermission(ctx, input.TraceId, input.ActorId, PermissionSuperUser) {
+		resp.Message = "Unauthorized: only super user can manage role permissions"
+		resp.ErrorCode = ErrorCodeForbidden
+		return resp
+	}
+
+	output := s.permissionService.RemovePermissionFromRole(ctx, &permission.RemovePermissionFromRoleInput{
+		TraceId:    input.TraceId,
+		RoleName:   input.RoleName,
+		Permission: input.Permission,
+		ActorId:    input.ActorId,
+	})
+	if !output.Success {
+		resp.Message = output.Message
+		if output.ErrorCode == permission.ErrorCodeInternal {
+			resp.ErrorCode = ErrorCodeInternal
+		} else {
+			resp.ErrorCode = ErrorCodeValidation
+		}
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = output.Message
+	return resp
+}
+
+// validateRolePermissionInput returns the first validation error message for
+// the role-permission management inputs, or "" when the input is valid.
+func (s *service) validateRolePermissionInput(traceId string, actorId int, roleName string, perm string) string {
+	if traceId == "" {
+		return "TraceId is mandatory"
+	}
+	if actorId == 0 {
+		return "Actor ID is mandatory"
+	}
+	if roleName == "" {
+		return "Role name is mandatory"
+	}
+	if perm == "" {
+		return "Permission is mandatory"
+	}
+	return ""
 }

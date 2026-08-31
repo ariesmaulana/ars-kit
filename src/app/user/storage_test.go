@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -366,6 +367,41 @@ func TestStorageResetLoginState(t *testing.T) {
 				assert.Equal(t, 0, state.FailedAttempts)
 				assert.Nil(t, state.LastFailedLoginAt)
 				assert.Nil(t, state.LockedUntil)
+			})
+		})
+	})
+}
+
+func TestStorageUpdateLastLogin(t *testing.T) {
+	RunTest(t, func(t *testing.T, suite *TestSuite) {
+		suite.Describe(t, "Storage UpdateLastLogin", func() {
+			suite.Runs(t, "Stamps last_login_at on commit and is idempotent", func(t *testing.T, appCtx *testsuite.AppContext) {
+				app := initUserApp(appCtx)
+				ctx := context.Background()
+
+				u := app.Helper.InsertUser(ctx, t, "lastlogin", "lastlogin@example.com", "Last Login", "password123")
+
+				// Fresh user has never logged in.
+				assert.Nil(t, app.Helper.GetLastLoginAt(ctx, t, u.Id))
+
+				tx, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				assert.Nil(t, tx.UpdateLastLogin(ctx, u.Id, clock.Now().UTC()))
+				// Uncommitted change is not visible outside the transaction.
+				assert.Nil(t, app.Helper.GetLastLoginAt(ctx, t, u.Id))
+				assert.Nil(t, tx.Commit())
+
+				stamped := app.Helper.GetLastLoginAt(ctx, t, u.Id)
+				assert.NotNil(t, stamped)
+
+				// A second call advances the timestamp within a new transaction.
+				tx2, err := app.Storage.BeginTx(ctx)
+				assert.Nil(t, err)
+				assert.Nil(t, tx2.UpdateLastLogin(ctx, u.Id, clock.Now().UTC()))
+				assert.Nil(t, tx2.Commit())
+				stamped2 := app.Helper.GetLastLoginAt(ctx, t, u.Id)
+				assert.NotNil(t, stamped2)
+				assert.True(t, stamped2.After(*stamped))
 			})
 		})
 	})

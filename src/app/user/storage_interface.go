@@ -39,6 +39,10 @@ type StorageTx interface {
 	// GetUserByUsername retrieves a user by username
 	GetUserByUsername(ctx context.Context, username string) (User, error)
 
+	// GetUserByEmail retrieves a user by email (case-insensitive). Any error
+	// means the address is unknown.
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+
 	// GetUserPassword retrieves a user's hashed password
 	GetUserPassword(ctx context.Context, id int) (string, error)
 
@@ -47,6 +51,12 @@ type StorageTx interface {
 
 	// UpdatePassword updates a user's password
 	UpdatePassword(ctx context.Context, id int, newPassword string) error
+
+	// InsertPasswordHistory stores a password hash snapshot for reuse checks.
+	InsertPasswordHistory(ctx context.Context, userID int, passwordHash string) error
+
+	// GetRecentPasswordHashes returns latest password hashes for reuse checks.
+	GetRecentPasswordHashes(ctx context.Context, userID int, limit int) ([]string, error)
 
 	// LockUserById locks a user row for update and returns the user
 	// This implements pessimistic locking to prevent concurrent modifications
@@ -66,6 +76,11 @@ type StorageTx interface {
 	// ResetLoginState clears the failed-attempt counter and lock after a
 	// successful login. Callers must hold the row lock (LockUserLoginState).
 	ResetLoginState(ctx context.Context, id int) error
+
+	// UpdateLastLogin sets last_login_at (and updated_at) to the given time
+	// for the user. The caller passes the timestamp (e.g. clock.Now()) so the
+	// write is deterministic and testable, instead of relying on SQL NOW().
+	UpdateLastLogin(ctx context.Context, id int, at time.Time) error
 
 	// GetUserTokenVersion reads a user's current token_version within the
 	// transaction.
@@ -92,6 +107,36 @@ type StorageTx interface {
 	// RevokeAllUserRefreshTokens marks every active refresh token of a user
 	// revoked (cleanup when token_version is bumped).
 	RevokeAllUserRefreshTokens(ctx context.Context, userID int) error
+
+	// UpdateUserStatus sets a user's status (active/disabled/suspended) and
+	// bumps updated_at. Exec-based, so a missing id is not an error; callers
+	// should hold the row lock (LockUserById) first when existence matters.
+	UpdateUserStatus(ctx context.Context, id int, status UserStatus) error
+
+	// DeleteUser hard-deletes a user (GDPR erasure). Refresh tokens cascade
+	// via the foreign key. Callers should hold the row lock (LockUserById)
+	// first so a missing id is detected before the delete.
+	DeleteUser(ctx context.Context, id int) error
+
+	// ListUsers returns a page of users matching an optional filter (username
+	// or email substring) and an optional status (empty = any), plus the total
+	// count for pagination. Read-only, like
+	// every other storage access it runs inside the transaction.
+	ListUsers(ctx context.Context, page, size int, filter, status string) ([]User, int, error)
+
+	// InsertEmailToken stores a single-purpose one-time token hash.
+	InsertEmailToken(ctx context.Context, userID int, purpose EmailTokenPurpose, tokenHash string, expiresAt time.Time) error
+
+	// GetEmailToken reads an email token by its hash for the given purpose,
+	// locking it FOR UPDATE. Any error (including pgx.ErrNoRows) means the
+	// token is unknown.
+	GetEmailToken(ctx context.Context, purpose EmailTokenPurpose, tokenHash string) (EmailToken, error)
+
+	// MarkEmailTokenUsed records when a token was consumed.
+	MarkEmailTokenUsed(ctx context.Context, id int) error
+
+	// UpdateEmailVerified sets email_verified_at for the user.
+	UpdateEmailVerified(ctx context.Context, userID int, at time.Time) error
 
 	// Commit commits the transaction
 	Commit() error
