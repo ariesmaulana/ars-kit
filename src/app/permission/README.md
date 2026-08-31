@@ -1,125 +1,101 @@
 # Permission Module
 
-Manages per-user permissions stored in the `user_permissions` table. Each
-permission grants one user the right to perform an action in a module.
+Role-based access control. Users hold **roles**, roles carry **permissions**, checks resolve through `user_roles` → `role_permissions`. Permissions are bare strings (`super_user`, `user:profile_update`, `default`) — the permission module never stores a `<user_id>:<permission>` key. The old `user_permissions` table was dropped in `20260128` and replaced by RBAC.
 
 ## When Is a Permission Check Allowed?
 
-A permission check for a user and an action returns `true` **only if at least
-one** of the following holds:
+`CheckPermission(userID, permission)` returns `true` only if **one** holds:
 
-1. The user holds the exact permission for that function: `<user_id>:<module>:<action>`
-2. The user holds the super user permission: `<user_id>:super_user` (wildcard —
-   overrides every action check)
+1. One of the user's roles carries the permission via `role_permissions`
+2. The user holds the `super_user` role (wildcard — passes every check)
 
-Otherwise the check returns `false` and the operation is denied.
+Otherwise `false`.
 
-Example — user `5` asking to update their username (needs `user:profile_update`):
+Example — user `5` asking for `user:profile_update`:
 
-| User 5 holds                       | Check result |
-|------------------------------------|--------------|
-| `5:user:profile_update`            | ✅ allowed   |
-| (nothing)                          | ❌ denied    |
-| `5:super_user`                     | ✅ allowed (wildcard) |
-| `5:super_user` + (nothing else)    | ✅ allowed (wildcard) |
+| User 5 roles | Check `user:profile_update` |
+|---|---|
+| `member` where `member` carries `user:profile_update` | ✅ allowed |
+| (no role with that permission) | ❌ denied |
+| `super_user` | ✅ allowed (wildcard) |
+
+## Roles
+
+Seeded in `20260128_000004_role_based_access.sql`:
+
+* `super_user` — **wildcard + bootstrap-only**. Never assigned at runtime (`AssignRole` refuses it). No rows in `role_permissions` by design — wildcard is implemented in `service.CheckPermission` fallback. Managed via SOP/direct DB if needed.
+* `member` — default role for self-registered users, initially carries `default` permission.
+
+Additional roles are inserted via SOP/direct DB (no API yet). `RoleExists` guards all mutations.
 
 ## Permission String Format
 
-A permission is a single string with three segments separated by `:`:
+Bare strings, no user ID embedded:
 
 ```
-<user_id>:<module>:<action>
+<module>:<action>  e.g. user:profile_update, user:password_update
+super_user         e.g. super_user (wildcard)
+default            e.g. default (demo workflow)
 ```
 
-| Segment  | Description                                                       | Example              |
-|----------|-------------------------------------------------------------------|----------------------|
-| user_id  | Database id of the user the permission belongs to                 | `5`                  |
-| module   | The module that owns the action, e.g. `user`                      | `user`               |
-| action   | The action within the module, e.g. `profile_update`               | `profile_update`     |
+Each module declares its permissions as constants in `const.go` (e.g. `src/app/user/const.go`). The permission catalog (`permissions` table) is the allowlist — `AssignPermissionToRole` rejects any permission not in the catalog.
 
-Full example: `5:user:profile_update` — user **5** may run the **profile_update**
-action of the **user** module.
+## Catalog
 
-> **Important:** the permission string **must include the owning user's id**.
-> The user id is part of the key itself, so the string is self-contained and
-> only meaningful for that user. A string without the id (e.g.
-> `user:profile_update`) will never match a permission check.
-
-## Super User Permission
-
-The super user permission grants the right to manage other users' permissions
-(grant/revoke). It also acts as a **wildcard**: a user holding
-`<user_id>:super_user` passes **any** permission check, even for actions they
-were never explicitly granted. It has no module/action segments:
-
-```
-<user_id>:super_user
-```
-
-Example: `7:super_user` — user **7** may grant/revoke permissions **and** passes
-every other permission check.
-
-## Setting a Permission
-
-The grant/revoke API and the check path take the **bare permission** (e.g.
-`user:profile_update` or `super_user`) plus a user id. The permission module
-builds the `<user_id>:<permission>` key itself before storing or checking, so a
-granted permission always matches a later check.
-
-### Via the grant API
-
-`POST /api/v1/users/permissions/grant` (actor must hold `<actor_id>:super_user`):
-
-```json
-{
-  "user_id": 5,
-  "permission": "user:profile_update"
-}
-```
-
-The module stores it as `5:user:profile_update`. Do **not** include the user id
-in the `permission` field — it would be prefixed again.
-
-### Directly in SQL
+`permissions` table is seeded manually via SOP when a new feature ships:
 
 ```sql
-INSERT INTO user_permissions (user_id, permission)
-VALUES (5, '5:user:profile_update')
-ON CONFLICT DO NOTHING;
+INSERT INTO permissions (permission) VALUES ('user:profile_update') ON CONFLICT DO NOTHING;
 ```
 
-When writing rows directly, store the **full key** (`<user_id>:<permission>`),
-since checks always look it up in that form. Granting via the API is
-idempotent — re-granting an existing permission is a no-op. Revoking
-(`POST /api/v1/users/permissions/revoke`) deletes the row.
+Source of truth for valid strings is each module's `const.go`.
+
+## API
+
+| Operation | Method | Gating |
+|---|---|---|
+| `CheckPermission` | `permission.Service.CheckPermission` | — |
+| `AssignRole` | `permission.Service.AssignRole` | refuses `super_user`, requires known role, audited |
+| `UnassignRole` | `permission.Service.UnassignRole` | protects last `super_user` holder, audited |
+| `AssignPermissionToRole` | `permission.Service.AssignPermissionToRole` | permission must be in catalog, refuses `super_user` role, audited |
+| `RemovePermissionFromRole` | `permission.Service.RemovePermissionFromRole` | same as above, audited |
+
+All mutations are transactional with `permission_audit` insert and use `ON CONFLICT DO NOTHING` (idempotent grant) / `DELETE` (idempotent revoke).
+
+Admin HTTP is via `user` module: `POST /api/v1/users/roles/assign`, `/unassign`, `/roles/permissions/grant`, `/revoke` — all require actor holds `super_user`.
 
 ## How Permissions Are Checked
 
-The user module enforces these keys (see `src/app/user/service_interface.go`
-for the module/action constants):
+User module enforces (see `src/app/user/const.go`):
 
-| Operation                | Permission required          |
-|--------------------------|------------------------------|
-| `UpdateUsername`         | `<user_id>:user:profile_update` or `<user_id>:super_user` |
-| `UpdatePassword`         | `<user_id>:user:password_update` or `<user_id>:super_user` |
-| `GrantPermission`        | `<actor_id>:super_user`      |
-| `RevokePermission`       | `<actor_id>:super_user`      |
-
-New modules should follow the same convention: declare every permission the
-module checks as a constant in the module's `const.go` (e.g.
-`src/app/user/const.go`), so callers and readers see the full list in one
-place without grepping string literals.
+| Operation | Permission required |
+|---|---|
+| `UpdateUsername` | `user:profile_update` or `super_user` wildcard |
+| `UpdatePassword` | `user:password_update` or `super_user` wildcard |
+| `AssignRole` / `UnassignRole` / `AssignPermissionToRole` / `RemovePermissionFromRole` / `ListUsers` / `GetUser` / `DeleteUser` / `UpdateUserStatus` | `super_user` |
 
 ## Storage
 
-| Column      | Type          | Notes                                    |
-|-------------|---------------|------------------------------------------|
-| id          | SERIAL        | primary key                              |
-| user_id     | INTEGER       | the user the permission belongs to       |
-| permission  | VARCHAR(255)  | the permission string (format above)     |
-| created_at  | TIMESTAMP     | default `NOW()`                          |
+| Table | Columns | Notes |
+|---|---|---|
+| `roles` | `id, name UNIQUE, created_at` | seeded `super_user`, `member` |
+| `user_roles` | `user_id, role_id UNIQUE(user_id,role_id)` | no cross-domain FK by design — domain isolation |
+| `role_permissions` | `role_id, permission PK(role_id,permission)` | permission must exist in `permissions` catalog (app-level check) |
+| `permissions` | `permission PK, created_at` | allowlist |
+| `permission_audit` | `id, actor_id NULL, target_id, permission, action grant/revoke, created_at` | transactional audit, `target_id=0` for role-content changes |
 
-Constraints:
+Cross-domain FKs (e.g. `user_roles.user_id -> users.id`) are intentionally omitted — each domain owns its tables only. Orphan cleanup is handled in service layer.
 
-- `UNIQUE (user_id, permission)` — one row per (user, permission)
-- `permission` is limited to 255 characters
+## Direct SQL (manual/SOP)
+
+```sql
+-- grant permission to role (catalog must contain the permission)
+INSERT INTO role_permissions (role_id, permission)
+SELECT id, 'user:profile_update' FROM roles WHERE name = 'member'
+ON CONFLICT DO NOTHING;
+
+-- assign role to user
+INSERT INTO user_roles (user_id, role_id)
+SELECT 5, id FROM roles WHERE name = 'member'
+ON CONFLICT DO NOTHING;
+```

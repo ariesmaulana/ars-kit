@@ -6,33 +6,21 @@ This document defines the locking strategy for the user domain to prevent deadlo
 
 1. **All update operations MUST use pessimistic row locking** (`SELECT ... FOR UPDATE`)
 2. **Locks are only available within transaction writer** (StorageTx interface)
-3. **Lock ordering must be strictly followed** to prevent deadlocks
+3. **Locks are strictly ordered** to prevent deadlocks — see below
 
-## Lock Hierarchy
+## Lock Ordering
 
-Locks must be acquired in this order:
+All current user-domain operations lock only `users`. When multiple rows of the same table are locked, they **must** be locked in ascending ID order.
 
-```
-1. users table (higher priority)
-2. members table (lower priority)
-```
+Future tables in the user domain (if added) will be documented here with their hierarchy. Cross-domain tables are never locked from the user domain — each domain owns its own locks.
 
-## Lock Ordering Rules
+## Rule 1: Single Entity Updates
+For single-entity updates, lock the target row before any UPDATE/DELETE.
 
-### Rule 1: Lock by Table Hierarchy
-When operations span multiple tables, always lock in this order:
-1. Lock `users` first
-2. Lock `members` second
-
-Example: When updating a member, lock the user row first, then the member row.
-
-### Rule 2: Lock by Ascending ID
+## Rule 2: Multiple Rows Same Table
 When locking multiple rows from the same table, lock by **ascending ID order**.
 
-Example: If updating members with IDs [5, 2, 8], lock them in order: 2, 5, 8.
-
-### Rule 3: Single Entity Updates
-For single-entity updates within one table, lock the target row before any UPDATE/DELETE.
+Example: If updating users with IDs [5, 2, 8], lock them in order: 2, 5, 8.
 
 ## Operation-Specific Lock Requirements
 
@@ -44,21 +32,14 @@ For single-entity updates within one table, lock the target row before any UPDAT
 1. Lock user by ID using `LockUserById(ctx, userId)`
 2. Perform update
 
-### UpdateMemberInfo (members table, validates against users)
-1. Lock user by ID using `LockUserById(ctx, userId)` - owner validation
-2. Lock member by ID using `LockMemberById(ctx, memberId)`
-3. Perform update
+### UpdateUserStatus / DeleteUser (users table only)
+1. Lock user by ID using `LockUserById(ctx, userId)`
+2. Perform update/delete
 
-### DeleteMember (members table, validates against users)
-1. Lock user by ID using `LockUserById(ctx, userId)` - owner validation
-2. Lock member by ID using `LockMemberById(ctx, memberId)`
-3. Perform delete
-
-### Bulk Operations (future)
-If multiple members need updating:
-1. Lock the user first
-2. Lock all members in ascending ID order
-3. Perform updates
+### Login (users table, throttle state)
+1. `GetUserByUsername` (no lock) to resolve ID
+2. Lock row via `LockUserLoginState(ctx, userId)` — serializes concurrent logins for the same account
+3. `RecordFailedLogin` or `ResetLoginState` + `UpdateLastLogin` within same transaction
 
 ## Implementation Notes
 
@@ -70,46 +51,33 @@ If multiple members need updating:
 ## Deadlock Prevention Checklist
 
 Before implementing any update operation, verify:
-- [ ] Are multiple tables involved? Lock by hierarchy (users → members)
 - [ ] Are multiple rows from the same table involved? Lock by ascending ID
 - [ ] Is the lock acquired within a transaction?
 - [ ] Is the lock acquired before any UPDATE/DELETE?
 
 ## Example Code
 
-### Correct: Update Member with Proper Lock Ordering
+### Correct: Update Username with Proper Lock
 
 ```go
 tx, _ := storage.BeginTx(ctx)
 defer tx.Rollback()
 
-// 1. Lock user first (hierarchy)
-user, err := tx.LockUserById(ctx, userId)
+user, errType, err := tx.LockUserById(ctx, userId)
 if err != nil {
     return err
 }
 
-// 2. Lock member second
-member, err := tx.LockMemberById(ctx, memberId)
-if err != nil {
-    return err
-}
-
-// 3. Validate ownership
-if member.UserId != user.Id {
-    return errors.New("unauthorized")
-}
-
-// 4. Perform update
-err = tx.UpdateMemberInfo(ctx, memberId, newName, newIncome)
+// Perform update while holding the lock
+err = tx.UpdateUsername(ctx, userId, newUsername)
 tx.Commit()
 ```
 
-### Incorrect: Wrong Lock Ordering (DEADLOCK RISK!)
+### Incorrect: Update Without Lock (RACE CONDITION)
 
 ```go
-// ❌ BAD: Locking member before user violates hierarchy
+// ❌ BAD: No lock, concurrent updates can overwrite each other
 tx, _ := storage.BeginTx(ctx)
-member, _ := tx.LockMemberById(ctx, memberId) // Wrong order!
-user, _ := tx.LockUserById(ctx, userId)       // Should be first!
+err = tx.UpdateUsername(ctx, userId, newUsername) // Missing LockUserById!
+tx.Commit()
 ```

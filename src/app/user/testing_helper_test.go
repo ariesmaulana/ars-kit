@@ -39,11 +39,14 @@ type DataUser struct {
 	LastLoginAt *time.Time // Pre-existing last login (nil = never logged in)
 }
 
-// InsertUser inserts a single user and returns it
+// InsertUser inserts a single verified user and returns it.
+// Inserted users have email_verified_at = NOW() so Login succeeds
+// without requiring a verification step. Use InsertUnverifiedUser for
+// the unverified case.
 func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, email, fullName, password string, status ...user.UserStatus) *user.User {
 	query := `
-		INSERT INTO users (username, email, full_name, password, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		INSERT INTO users (username, email, full_name, password, status, email_verified_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
 		RETURNING id, username, email, full_name, status, created_at, updated_at
 	`
 
@@ -87,6 +90,37 @@ func hashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hashedBytes), nil
+}
+
+// InsertUnverifiedUser inserts a single unverified user (email_verified_at = NULL)
+// for tests that exercise the email-verification gate on Login.
+func (h *TestHelper) InsertUnverifiedUser(ctx context.Context, t *testing.T, username, email, fullName, password string, status ...user.UserStatus) *user.User {
+	query := `
+		INSERT INTO users (username, email, full_name, password, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		RETURNING id, username, email, full_name, status, created_at, updated_at
+	`
+
+	var u user.User
+	userStatus := user.UserStatusActive
+	if len(status) > 0 && status[0] != "" {
+		userStatus = status[0]
+	}
+	if userStatus == "" {
+		userStatus = user.UserStatusActive
+	}
+	err := h.pool.QueryRow(ctx, query, username, email, fullName, password, userStatus).Scan(
+		&u.Id,
+		&u.Username,
+		&u.Email,
+		&u.FullName,
+		&u.Status,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+	assert.Nil(t, err)
+
+	return &u
 }
 
 // InsertUsers inserts multiple users and returns them

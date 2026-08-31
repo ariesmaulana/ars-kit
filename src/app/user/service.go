@@ -2,10 +2,13 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
@@ -300,6 +303,15 @@ func (s *service) Login(ctx context.Context, input *LoginInput) *LoginOutput {
 			Msg("Login blocked: account disabled")
 		resp.Message = "Account disabled"
 		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+	if user.EmailVerifiedAt == nil {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Str("username", input.Username).
+			Msg("Login blocked: email not verified")
+		resp.Message = "Email not verified"
+		resp.ErrorCode = ErrorCodeForbidden
 		return resp
 	}
 
@@ -753,6 +765,19 @@ func (s *service) UpdateUsername(ctx context.Context, input *UpdateUsernameInput
 	// Update username
 	err = db.UpdateUsername(ctx, input.Id, input.NewUsername)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			log.Warn().Str("traceId", input.TraceId).Str("newUsername", input.NewUsername).Msg("Username already taken")
+			resp.Message = "Username already exists"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		if strings.Contains(err.Error(), "duplicate key") {
+			log.Warn().Str("traceId", input.TraceId).Str("newUsername", input.NewUsername).Msg("Username already taken")
+			resp.Message = "Username already exists"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to update username")
 		resp.Message = "Failed to update username"
 		resp.ErrorCode = ErrorCodeInternal
