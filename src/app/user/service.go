@@ -13,6 +13,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
+	"github.com/ariesmaulana/ars-kit/src/app/upload"
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 )
 
@@ -52,6 +54,7 @@ type service struct {
 	jwtService        *JWTService
 	clockSource       clock.Source
 	emailCfg          EmailConfig
+	avatarUploader    upload.Uploader
 }
 
 // defaultEmailTokenExpiry is used when EmailConfig.TokenExpiry is zero.
@@ -69,7 +72,7 @@ const (
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
 // server-side. emailCfg wires the email flows (forgot-password, verification).
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, clockSource ...clock.Source) Service {
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, avatarUploader upload.Uploader, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
 	}
@@ -84,6 +87,7 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 		jwtService:        jwtService,
 		clockSource:       cs,
 		emailCfg:          emailCfg,
+		avatarUploader:    avatarUploader,
 	}
 }
 
@@ -996,6 +1000,139 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	resp.User = user
 
 	return resp
+}
+
+// UploadAvatar uploads a profile photo for the authenticated user. It calls
+// the upload foundation lib, persists the resulting storage key to
+// users.avatar_key, and best-effort deletes the previous avatar file after the
+// new one is committed — if the new upload fails the old avatar stays intact.
+func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput {
+	resp := &UploadAvatarOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Reader == nil {
+		log.Warn().Msg("Reader is nil")
+		resp.Message = "avatar file is required"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	// Upload to the storage backend. The lib validates MIME sniffing +
+	// extension cross-check + size enforcement.
+	result, err := s.avatarUploader.Upload(ctx, upload.UploadRequest{
+		Reader:   input.Reader,
+		Filename: input.Filename,
+		SizeHint: input.SizeHint,
+	})
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Avatar upload failed")
+		if errors.Is(err, upload.ErrInvalidMIME) {
+			resp.Message = "unsupported image type — use jpeg/png/webp"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		if errors.Is(err, upload.ErrTooLarge) {
+			resp.Message = "avatar must be ≤ 2MB"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		if errors.Is(err, upload.ErrBadRequest) {
+			resp.Message = err.Error()
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		resp.Message = "upload failed"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Begin transaction
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to update avatar"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	defer db.Rollback()
+
+	// Lock user row to serialize concurrent avatar changes and read the
+	// previous avatar key for cleanup.
+	user, errType, err := db.LockUserById(ctx, input.Id)
+	if err != nil {
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to update avatar"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	oldKey := ""
+	if user.AvatarKey != nil {
+		oldKey = *user.AvatarKey
+	}
+
+	// Persist the new key
+	if err := db.UpdateAvatarKey(ctx, input.Id, result.Key); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to save avatar key")
+		// Best-effort cleanup — don't leave an orphan file.
+		s.cleanupOrphan(result.Key, input.TraceId)
+		resp.Message = "Failed to update avatar"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	if err := db.Commit(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit avatar update")
+		// Best-effort cleanup — don't leave an orphan file.
+		s.cleanupOrphan(result.Key, input.TraceId)
+		resp.Message = "Failed to update avatar"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Cleanup the previous avatar file through the workflow engine — the
+	// request never blocks on it and failed deletes are retried by workers.
+	// Delete is idempotent (NotFound = nil) and never fails on empty keys.
+	if oldKey != "" && oldKey != result.Key {
+		if _, err := workflow.Register(ctx, workflow.NewDeleteAvatarJob(input.TraceId, oldKey)); err != nil {
+			log.Err(err).Str("traceId", input.TraceId).Str("key", oldKey).Msg("Failed to queue old avatar cleanup")
+		}
+	}
+
+	user.AvatarKey = &result.Key
+	resp.Success = true
+	resp.Message = "Avatar updated successfully"
+	resp.Key = result.Key
+	resp.MIME = result.MIME
+	resp.Size = result.Size
+	resp.User = user
+
+	return resp
+}
+
+// cleanupOrphan best-effort removes a freshly-uploaded key that was never
+// committed to the DB. Context is detached: cleanup must run even if the
+// request is cancelled.
+func (s *service) cleanupOrphan(key, traceId string) {
+	if derr := s.avatarUploader.Delete(context.Background(), key); derr != nil {
+		log.Err(derr).Str("traceId", traceId).Str("key", key).Msg("Failed to clean up orphan avatar")
+	}
 }
 
 // ListUsers lists users for an admin. The actor must hold the super_user

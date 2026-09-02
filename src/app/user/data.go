@@ -11,15 +11,16 @@ const (
 )
 
 type User struct {
-	Id               int
-	Username         string
-	Email            string
-	FullName         string
-	Status           UserStatus
-	EmailVerifiedAt  *time.Time
-	LastLoginAt      *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	Id              int
+	Username        string
+	Email           string
+	FullName        string
+	Status          UserStatus
+	AvatarKey       *string
+	EmailVerifiedAt *time.Time
+	LastLoginAt     *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // EmailTokenPurpose identifies what a single-purpose email token is for.

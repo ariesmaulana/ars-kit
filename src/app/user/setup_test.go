@@ -6,6 +6,7 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/database"
 	permissionfakes "github.com/ariesmaulana/ars-kit/src/app/permission/fakes"
+	"github.com/ariesmaulana/ars-kit/src/app/upload"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
@@ -66,7 +67,28 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,
 	})
-	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, clockSource...)
+	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, nil, clockSource...)
+
+	return &UserApp{
+		AppContext:        app,
+		Helper:            helper,
+		Storage:           storage,
+		Service:           service,
+		PermissionSvcMock: permissionService,
+	}
+}
+
+// initUserAppWithUploader is initUserApp with a caller-provided avatar
+// uploader, for tests that exercise UploadAvatar against a fake backend.
+func initUserAppWithUploader(app *testsuite.AppContext, uploader upload.Uploader) *UserApp {
+	helper := NewTestHelper(app.Pool)
+	storage := user.NewStorage(app.Pool)
+	permissionService := &permissionfakes.ServiceFake{}
+	jwtService := user.NewJWTService(user.JWTConfig{
+		SecretKey:       "test-secret",
+		ExpirationHours: 24,
+	})
+	service := user.NewService(storage, permissionService, user.DefaultLoginThrottleConfig(), jwtService, user.EmailConfig{}, uploader)
 
 	return &UserApp{
 		AppContext:        app,

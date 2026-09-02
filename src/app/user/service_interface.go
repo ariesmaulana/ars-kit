@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
@@ -100,6 +101,11 @@ type Service interface {
 	// user also revokes all their active refresh tokens so existing sessions
 	// die immediately; an actor cannot disable/suspend their own account.
 	UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput
+
+	// UploadAvatar uploads a profile photo via the upload foundation lib,
+	// persists the storage key to users.avatar_key, and best-effort cleans up
+	// any previous avatar file.
+	UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput
 }
 
 // DemoWorkflowInput represents input for the async demo registration. The
@@ -458,6 +464,30 @@ type VerifyEmailOutput struct {
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
+}
+
+// UploadAvatarInput carries the file primitives the handler extracts from
+// the multipart form. The upload lib never touches multipart directly.
+type UploadAvatarInput struct {
+	TraceId  string
+	Id       int
+	Reader   io.Reader
+	Filename string
+	SizeHint int64
+}
+
+// UploadAvatarOutput is the result of a profile-photo upload. On success it
+// also returns the updated User so the handler can mirror the change back to
+// the client without an extra read.
+type UploadAvatarOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+	Key       string
+	MIME      string
+	Size      int64
+	User      User
 }
 
 // EmailConfig groups the configuration the user service needs for

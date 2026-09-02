@@ -13,6 +13,7 @@ import (
 	"github.com/ariesmaulana/ars-kit/database"
 	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
+	"github.com/ariesmaulana/ars-kit/src/app/upload"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	appmw "github.com/ariesmaulana/ars-kit/src/middleware"
@@ -122,6 +123,27 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 	// App Modules
 	userStorage := user.NewStorage(db.Pool)
 
+	// Avatar uploader — per-domain upload foundation instance. Storage
+	// backend chosen by config: local dir for dev, S3/R2 for production.
+	avatarUploader, uerr := upload.NewUploader(upload.Config{
+		AllowedMIMEs: []string{"image/jpeg", "image/png", "image/webp"},
+		MaxSizeBytes: 2 * 1024 * 1024, // 2 MB
+		Storage:      upload.StorageKind(conf.UploadStorage),
+		Local:        upload.LocalConfig{BaseDir: conf.UploadLocalBaseDir},
+		S3: upload.S3Config{
+			Bucket:          conf.UploadS3Bucket,
+			Region:          conf.UploadS3Region,
+			Endpoint:        conf.UploadS3Endpoint,
+			AccessKeyID:     conf.UploadS3AccessKeyID,
+			SecretAccessKey: conf.UploadS3SecretAccessKey,
+			Prefix:          conf.UploadS3Prefix,
+			UsePathStyle:    conf.UploadS3UsePathStyle,
+		},
+	})
+	if uerr != nil {
+		log.Fatal().Err(uerr).Msg("Failed to create avatar uploader")
+	}
+
 	// JWT service: shared by the user service (issues token pairs at
 	// login/register/refresh) and the HTTP handler (middleware + cookies).
 	// The middleware token-version loader rejects access tokens minted before
@@ -143,13 +165,14 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 	}, jwtService, user.EmailConfig{
 		AppURL:      conf.AppURL,
 		TokenExpiry: time.Duration(conf.EmailTokenExpiryHours) * time.Hour,
-	})
+	}, avatarUploader)
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
 	workflowEngine.Register(
 		workflow.DemoWorkflow(userService),
 		workflow.SendEmailWorkflow(emailSender),
+		workflow.AvatarCleanupWorkflow(avatarUploader),
 	)
 	workflow.SetDefault(workflowEngine)
 

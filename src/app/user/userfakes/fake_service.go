@@ -262,6 +262,18 @@ type ServiceFake struct {
 	updateUsernameReturnsOnCall map[int]struct {
 		result1 *user.UpdateUsernameOutput
 	}
+	UploadAvatarStub        func(context.Context, *user.UploadAvatarInput) *user.UploadAvatarOutput
+	uploadAvatarMutex       sync.RWMutex
+	uploadAvatarArgsForCall []struct {
+		arg1 context.Context
+		arg2 *user.UploadAvatarInput
+	}
+	uploadAvatarReturns struct {
+		result1 *user.UploadAvatarOutput
+	}
+	uploadAvatarReturnsOnCall map[int]struct {
+		result1 *user.UploadAvatarOutput
+	}
 	VerifyEmailStub        func(context.Context, *user.VerifyEmailInput) *user.VerifyEmailOutput
 	verifyEmailMutex       sync.RWMutex
 	verifyEmailArgsForCall []struct {
@@ -1577,6 +1589,68 @@ func (fake *ServiceFake) UpdateUsernameReturnsOnCall(i int, result1 *user.Update
 	}
 	fake.updateUsernameReturnsOnCall[i] = struct {
 		result1 *user.UpdateUsernameOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UploadAvatar(arg1 context.Context, arg2 *user.UploadAvatarInput) *user.UploadAvatarOutput {
+	fake.uploadAvatarMutex.Lock()
+	ret, specificReturn := fake.uploadAvatarReturnsOnCall[len(fake.uploadAvatarArgsForCall)]
+	fake.uploadAvatarArgsForCall = append(fake.uploadAvatarArgsForCall, struct {
+		arg1 context.Context
+		arg2 *user.UploadAvatarInput
+	}{arg1, arg2})
+	stub := fake.UploadAvatarStub
+	fakeReturns := fake.uploadAvatarReturns
+	fake.recordInvocation("UploadAvatar", []interface{}{arg1, arg2})
+	fake.uploadAvatarMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *ServiceFake) UploadAvatarCallCount() int {
+	fake.uploadAvatarMutex.RLock()
+	defer fake.uploadAvatarMutex.RUnlock()
+	return len(fake.uploadAvatarArgsForCall)
+}
+
+func (fake *ServiceFake) UploadAvatarCalls(stub func(context.Context, *user.UploadAvatarInput) *user.UploadAvatarOutput) {
+	fake.uploadAvatarMutex.Lock()
+	defer fake.uploadAvatarMutex.Unlock()
+	fake.UploadAvatarStub = stub
+}
+
+func (fake *ServiceFake) UploadAvatarArgsForCall(i int) (context.Context, *user.UploadAvatarInput) {
+	fake.uploadAvatarMutex.RLock()
+	defer fake.uploadAvatarMutex.RUnlock()
+	argsForCall := fake.uploadAvatarArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *ServiceFake) UploadAvatarReturns(result1 *user.UploadAvatarOutput) {
+	fake.uploadAvatarMutex.Lock()
+	defer fake.uploadAvatarMutex.Unlock()
+	fake.UploadAvatarStub = nil
+	fake.uploadAvatarReturns = struct {
+		result1 *user.UploadAvatarOutput
+	}{result1}
+}
+
+func (fake *ServiceFake) UploadAvatarReturnsOnCall(i int, result1 *user.UploadAvatarOutput) {
+	fake.uploadAvatarMutex.Lock()
+	defer fake.uploadAvatarMutex.Unlock()
+	fake.UploadAvatarStub = nil
+	if fake.uploadAvatarReturnsOnCall == nil {
+		fake.uploadAvatarReturnsOnCall = make(map[int]struct {
+			result1 *user.UploadAvatarOutput
+		})
+	}
+	fake.uploadAvatarReturnsOnCall[i] = struct {
+		result1 *user.UploadAvatarOutput
 	}{result1}
 }
 

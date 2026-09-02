@@ -108,6 +108,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
 	protected.PUT("/profile/password", h.UpdatePassword)
+	protected.PUT("/profile/avatar", h.UploadAvatar)
 	protected.POST("/roles/assign", h.AssignRole)
 	protected.POST("/roles/unassign", h.UnassignRole)
 	protected.POST("/roles/permissions/grant", h.AssignPermissionToRole)
@@ -196,6 +197,7 @@ type UserDTO struct {
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	FullName  string    `json:"full_name"`
+	AvatarKey *string   `json:"avatar_key,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -238,6 +240,7 @@ func toUserDTO(user User) UserDTO {
 		Username:  user.Username,
 		Email:     user.Email,
 		FullName:  user.FullName,
+		AvatarKey: user.AvatarKey,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
@@ -769,6 +772,85 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: "Password updated successfully",
+	})
+}
+
+// AvatarUploadResponse represents the HTTP response for avatar upload.
+type AvatarUploadResponse struct {
+	Success bool     `json:"success"`
+	Message string   `json:"message"`
+	Key     string   `json:"key,omitempty"`
+	MIME    string   `json:"mime,omitempty"`
+	Size    int64    `json:"size,omitempty"`
+	Data    *UserDTO `json:"data,omitempty"`
+}
+
+// UploadAvatar handles PUT /api/v1/users/profile/avatar
+// @Summary Upload profile avatar
+// @Description Upload a profile photo. Accepts multipart form field "avatar";
+// @Description only jpeg/png/webp up to 2MB.
+// @Tags users
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param avatar formData file true "Avatar image file"
+// @Success 200 {object} AvatarUploadResponse
+// @Failure 400 {object} AvatarUploadResponse
+// @Failure 401 {object} AvatarUploadResponse
+// @Failure 403 {object} AvatarUploadResponse
+// @Failure 500 {object} AvatarUploadResponse
+// @Router /api/v1/users/profile/avatar [put]
+func (h *Handler) UploadAvatar(c echo.Context) error {
+	traceID := xid.New().String()
+
+	userID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, AvatarUploadResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	fh, err := c.FormFile("avatar")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, AvatarUploadResponse{
+			Success: false,
+			Message: "avatar file is required",
+		})
+	}
+	f, err := fh.Open()
+	if err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to open uploaded avatar file")
+		return c.JSON(http.StatusInternalServerError, AvatarUploadResponse{
+			Success: false,
+			Message: "cannot open file",
+		})
+	}
+	defer f.Close()
+
+	output := h.service.UploadAvatar(c.Request().Context(), &UploadAvatarInput{
+		TraceId:  traceID,
+		Id:       userID,
+		Reader:   f,
+		Filename: fh.Filename,
+		SizeHint: fh.Size,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AvatarUploadResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	dto := toUserDTO(output.User)
+	return c.JSON(http.StatusOK, AvatarUploadResponse{
+		Success: true,
+		Message: output.Message,
+		Key:     output.Key,
+		MIME:    output.MIME,
+		Size:    output.Size,
+		Data:    &dto,
 	})
 }
 
