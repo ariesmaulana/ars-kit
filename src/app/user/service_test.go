@@ -2,15 +2,36 @@ package user_test
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
 	"github.com/stretchr/testify/assert"
 )
+
+// registerWorkflowMu serialises the Register scenarios' global default
+// engine (see runtest in TestUserRegister).
+var registerWorkflowMu sync.Mutex
+
+// sendEmailCapture is a workflow.EmailService fake that records deliveries.
+type sendEmailCapture struct {
+	mu   sync.Mutex
+	sent []email.EmailMessage
+}
+
+func (f *sendEmailCapture) SendText(_ context.Context, msg email.EmailMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, msg)
+	return nil
+}
 
 func TestUserRegister(t *testing.T) {
 	RunTest(t, func(t *testing.T, suite *TestSuite) {
@@ -23,9 +44,10 @@ func TestUserRegister(t *testing.T) {
 				password string
 			}
 			type expected struct {
-				success     bool
-				message     string
-				userCreated bool
+				success        bool
+				message        string
+				userCreated    bool
+				workflowQueued bool
 			}
 
 			type testRow struct {
@@ -37,10 +59,31 @@ func TestUserRegister(t *testing.T) {
 			runtest := func(t *testing.T, app *UserApp, r *testRow) {
 				ctx := context.Background()
 
+				// Unique trace per row so the workflow assertion below
+				// only sees this row's job.
+				traceID := "trace-test-" + strings.Map(func(ch rune) rune {
+					if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' {
+						return ch
+					}
+					return '_'
+				}, r.name)
+
+				// The service enqueues through the global default engine,
+				// so install one bound to this scenario's pool and hold
+				// the mutex until the assertion below: otherwise a
+				// parallel scenario's Register could land in this schema.
+				registerWorkflowMu.Lock()
+				defer registerWorkflowMu.Unlock()
+				store := workflow.NewStore(app.Pool)
+				engine := workflow.NewEngine(store, workflow.Config{})
+				engine.Register(workflow.SendEmailWorkflow(&sendEmailCapture{}))
+				workflow.SetDefault(engine)
+				defer workflow.SetDefault(nil)
+
 				initialUsers := app.Helper.GetAllUsers(ctx, t)
 
 				output := app.Service.Register(ctx, &user.RegisterInput{
-					TraceId:  "trace-test",
+					TraceId:  traceID,
 					Username: r.input.username,
 					Email:    r.input.email,
 					FullName: r.input.fullName,
@@ -51,6 +94,13 @@ func TestUserRegister(t *testing.T) {
 
 				assert.Equal(t, r.expected.success, output.Success, r.name)
 				assert.Equal(t, r.expected.message, output.Message, r.name)
+
+				// Register must really enqueue the verification email job.
+				expectedQueued := 0
+				if r.expected.workflowQueued {
+					expectedQueued = 1
+				}
+				assert.Equal(t, expectedQueued, app.Helper.CountWorkflowJobs(ctx, t, traceID, "send_email"), r.name)
 
 				if r.expected.success == false {
 					// Verify no users were created
@@ -91,9 +141,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password12345",
 						},
 						expected: &expected{
-							success:     true,
-							message:     "User registered successfully",
-							userCreated: true,
+							success:        true,
+							message:        "User registered successfully",
+							userCreated:    true,
+							workflowQueued: true,
 						},
 					},
 					{
@@ -105,9 +156,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password12345",
 						},
 						expected: &expected{
-							success:     true,
-							message:     "User registered successfully",
-							userCreated: true,
+							success:        true,
+							message:        "User registered successfully",
+							userCreated:    true,
+							workflowQueued: true,
 						},
 					},
 					{
@@ -119,9 +171,10 @@ func TestUserRegister(t *testing.T) {
 							password: "pass12345678",
 						},
 						expected: &expected{
-							success:     true,
-							message:     "User registered successfully",
-							userCreated: true,
+							success:        true,
+							message:        "User registered successfully",
+							userCreated:    true,
+							workflowQueued: true,
 						},
 					},
 					{
@@ -133,9 +186,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password12345",
 						},
 						expected: &expected{
-							success:     true,
-							message:     "User registered successfully",
-							userCreated: true,
+							success:        true,
+							message:        "User registered successfully",
+							userCreated:    true,
+							workflowQueued: true,
 						},
 					},
 					{
@@ -147,9 +201,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password12345",
 						},
 						expected: &expected{
-							success:     true,
-							message:     "User registered successfully",
-							userCreated: true,
+							success:        true,
+							message:        "User registered successfully",
+							userCreated:    true,
+							workflowQueued: true,
 						},
 					},
 
@@ -163,9 +218,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Username is mandatory",
-							userCreated: false,
+							success:        false,
+							message:        "Username is mandatory",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 					{
@@ -177,9 +233,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Username must be at least 5 characters long",
-							userCreated: false,
+							success:        false,
+							message:        "Username must be at least 5 characters long",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 
@@ -193,9 +250,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Email is mandatory",
-							userCreated: false,
+							success:        false,
+							message:        "Email is mandatory",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 					{
@@ -207,9 +265,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Invalid email",
-							userCreated: false,
+							success:        false,
+							message:        "Invalid email",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 					{
@@ -221,9 +280,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Invalid email",
-							userCreated: false,
+							success:        false,
+							message:        "Invalid email",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 					{
@@ -235,9 +295,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password123",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Invalid email",
-							userCreated: false,
+							success:        false,
+							message:        "Invalid email",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 
@@ -251,9 +312,10 @@ func TestUserRegister(t *testing.T) {
 							password: "",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Password is mandatory",
-							userCreated: false,
+							success:        false,
+							message:        "Password is mandatory",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 					{
@@ -265,9 +327,10 @@ func TestUserRegister(t *testing.T) {
 							password: "pass1234567",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "Password must be at least 12 characters long",
-							userCreated: false,
+							success:        false,
+							message:        "Password must be at least 12 characters long",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 
@@ -281,9 +344,10 @@ func TestUserRegister(t *testing.T) {
 							password: "password12345",
 						},
 						expected: &expected{
-							success:     false,
-							message:     "FullName is mandatory",
-							userCreated: false,
+							success:        false,
+							message:        "FullName is mandatory",
+							userCreated:    false,
+							workflowQueued: false,
 						},
 					},
 				})

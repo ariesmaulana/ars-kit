@@ -19,5 +19,3 @@ CREATE INDEX IF NOT EXISTS idx_email_tokens_user_purpose
     ON email_tokens (user_id, purpose);
 
 -- +goose Down
-DROP TABLE IF EXISTS email_tokens;
-ALTER TABLE users DROP COLUMN IF EXISTS email_verified_at;

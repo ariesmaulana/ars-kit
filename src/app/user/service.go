@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
 	"github.com/ariesmaulana/ars-kit/src/app/upload"
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
@@ -163,9 +164,13 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	}
 
 	// Record the initial password hash so future change-password reuse checks
-	// cover it. Non-fatal: the user is already created.
+	// cover it. Failure is fatal: the insert is still inside the transaction,
+	// so a return rolls back the user row and keeps registration atomic.
 	if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
-		log.Warn().Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
 	}
 
 	data, err := db.GetUserById(ctx, insertedId)
@@ -196,12 +201,42 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	resp.AccessToken = accessToken
 	resp.RefreshToken = refreshToken
 
+	// Create the email-verification token in the same transaction so the
+	// account and its verification token commit atomically. Without this,
+	// Register creates an account that can never receive its verification
+	// email (login is blocked until email_verified_at is set).
+	verifyToken, err := s.generateAndStoreToken(ctx, db, insertedId, EmailTokenPurposeEmailVerification)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to create verification token")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		resp.AccessToken = ""
+		resp.RefreshToken = ""
+		return resp
+	}
+
 	err = db.Commit()
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to register user"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
+	}
+
+	// Queue the verification email for delivery by the send_email workflow
+	// worker. Fire-and-forget: the account and token are already committed,
+	// so a queue failure must not fail the registration (a retry would hit
+	// "already exists"). The client can re-request via /send-verification.
+	if err := s.queueEmail(ctx, input.TraceId, email.EmailMessage{
+		To:      []string{data.Email},
+		Subject: "Verify your email address",
+		Text: "Hi " + data.FullName + ",\n\n" +
+			"Thanks for signing up. Please verify your email address by opening the link below.\n" +
+			"It expires in " + fmtDuration(s.tokenExpiry()) + ":\n\n" +
+			s.buildVerifyLink(verifyToken) + "\n\n" +
+			"If you didn't create this account, ignore this email.\n",
+	}); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Int("userId", insertedId).Msg("verification email not queued; re-request via send-verification")
 	}
 
 	log.Info().

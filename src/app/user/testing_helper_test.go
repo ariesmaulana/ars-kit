@@ -351,6 +351,13 @@ func (h *TestHelper) CountRefreshTokens(ctx context.Context, t *testing.T, userI
 	return count
 }
 
+func (h *TestHelper) CountWorkflowJobs(ctx context.Context, t *testing.T, traceID, workflowName string) int {
+	var count int
+	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM workflow_job WHERE trace_id = $1 AND workflow_name = $2", traceID, workflowName).Scan(&count)
+	assert.Nil(t, err)
+	return count
+}
+
 // InsertActiveRefreshToken inserts one active (non-revoked) refresh token row
 // for a user so session-revocation behavior is observable in tests.
 func (h *TestHelper) InsertActiveRefreshToken(ctx context.Context, t *testing.T, userID int) {
