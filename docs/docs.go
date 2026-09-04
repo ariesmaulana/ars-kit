@@ -23,7 +23,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "List users with pagination and an optional username/email\nfilter. Requires the super_user permission.",
+                "description": "List users with pagination and optional username/email filter\nand account-status filter. Requires the super_user permission.",
                 "consumes": [
                     "application/json"
                 ],
@@ -51,6 +51,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by username or email substring",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status: active, disabled, suspended",
+                        "name": "status",
                         "in": "query"
                     }
                 ],
@@ -208,6 +214,67 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/user.UserResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/profile/avatar": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upload a profile photo. Accepts multipart form field \"avatar\";\nonly jpeg/png/webp up to 2MB.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Upload profile avatar",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Avatar image file",
+                        "name": "avatar",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.AvatarUploadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.AvatarUploadResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/user.AvatarUploadResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/user.AvatarUploadResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.AvatarUploadResponse"
                         }
                     }
                 }
@@ -959,6 +1026,29 @@ const docTemplate = `{
                 }
             }
         },
+        "user.AvatarUploadResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/user.UserDTO"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "mime": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "user.LoginRequest": {
             "type": "object",
             "required": [
@@ -1109,6 +1199,9 @@ const docTemplate = `{
         "user.UserDTO": {
             "type": "object",
             "properties": {
+                "avatar_key": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
