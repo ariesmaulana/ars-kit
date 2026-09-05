@@ -170,7 +170,6 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
 	workflowEngine.Register(
-		workflow.DemoWorkflow(userService),
 		workflow.SendEmailWorkflow(emailSender),
 		workflow.AvatarCleanupWorkflow(avatarUploader),
 	)

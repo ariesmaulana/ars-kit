@@ -100,13 +100,12 @@ func TestWorkerFailsJobWhenPersistFails(t *testing.T) {
 	// a lost mutation.
 	fs := newFakeStore()
 	fs.advanceErr = errors.New("connection reset")
-	userSvc := successUserSvc(42)
 	engine := workflow.NewEngine(fs, workflow.Config{
 		Workers: 1, PollInterval: time.Millisecond, StaleTimeout: time.Minute,
 	})
-	engine.Register(workflow.DemoWorkflow(userSvc))
+	engine.Register(demoDefinition())
 
-	_, err := fs.Insert(context.Background(), "demo", "trace-1", json.RawMessage(demoPayload), "RegisterUser")
+	_, err := fs.Insert(context.Background(), "demo", "trace-1", json.RawMessage(`{}`), "First")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

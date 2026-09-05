@@ -93,7 +93,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	// Public routes
 	public := users.Group("", authLimiter)
 	public.POST("/register", h.Register)
-	public.POST("/register-workflow", h.RegisterWorkflow)
+	
 	public.POST("/login", h.Login)
 	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
@@ -125,10 +125,10 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 
 // RegisterRequest represents the HTTP request body for user registration
 type RegisterRequest struct {
-	Username string `json:"username" validate:"required,min=3,max=50"`
+	Username string `json:"username" validate:"required,min=5,max=50"`
 	Email    string `json:"email" validate:"required,email"`
-	FullName string `json:"full_name" validate:"required"`
-	Password string `json:"password" validate:"required,min=6"`
+	FullName string `json:"full_name" validate:"required,max=100"`
+	Password string `json:"password" validate:"required,min=12"`
 }
 
 // LoginRequest represents the HTTP request body for user login
@@ -295,50 +295,6 @@ func (h *Handler) Register(c echo.Context) error {
 		Token:        output.AccessToken,
 		RefreshToken: output.RefreshToken,
 		User:         &dto,
-	})
-}
-
-// RegisterWorkflow handles POST /api/v1/users/register-workflow
-// @Summary Register a user asynchronously via the workflow engine
-// @Description Validate the input and enqueue a register_user workflow job.
-// @Description The user is created and granted its permission by background
-// @Description workers instead of synchronously in the request.
-// @Tags users
-// @Accept json
-// @Produce json
-// @Param user body RegisterRequest true "User registration data"
-// @Success 202 {object} AuthResponse
-// @Failure 400 {object} AuthResponse
-// @Failure 500 {object} AuthResponse
-// @Router /api/v1/users/register-workflow [post]
-func (h *Handler) RegisterWorkflow(c echo.Context) error {
-	traceID := xid.New().String()
-
-	var req RegisterRequest
-	if err := bindJSON(c, &req); err != nil {
-		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, AuthResponse{
-			Success: false,
-			Message: "Invalid request body",
-		})
-	}
-
-	output := h.service.DemoWorkflow(c.Request().Context(), &DemoWorkflowInput{
-		TraceId:  traceID,
-		Email:    req.Email,
-		Username: req.Username,
-	})
-
-	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
-			Success: false,
-			Message: output.Message,
-		})
-	}
-
-	return c.JSON(http.StatusAccepted, AuthResponse{
-		Success: true,
-		Message: "Demo workflow queued",
 	})
 }
 

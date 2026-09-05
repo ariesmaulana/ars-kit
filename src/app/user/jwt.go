@@ -58,6 +58,8 @@ type JWTService struct {
 	// before a bump (password change) are rejected. Nil disables the check
 	// (tests and callers without storage access).
 	tokenVersionLoader func(ctx context.Context, userID int) (int, error)
+	// clockSource provides the current time. Nil means package clock.Now().
+	clockSource clock.Source
 }
 
 // NewJWTService creates a new JWT service
@@ -92,6 +94,20 @@ func (j *JWTService) SetTokenVersionLoader(fn func(ctx context.Context, userID i
 	j.tokenVersionLoader = fn
 }
 
+// SetClockSource installs the clock used for token timestamp generation.
+// Nil means use the package-level clock.Now() (real time).
+func (j *JWTService) SetClockSource(cs clock.Source) {
+	j.clockSource = cs
+}
+
+// now returns the current time from the injected source, or clock.Now().
+func (j *JWTService) now() time.Time {
+	if j.clockSource != nil {
+		return j.clockSource.Now()
+	}
+	return clock.Now()
+}
+
 // RefreshExpiration returns the refresh token lifetime.
 func (j *JWTService) RefreshExpiration() time.Duration {
 	return time.Hour * time.Duration(j.config.RefreshExpirationHours)
@@ -108,9 +124,9 @@ func (j *JWTService) GenerateToken(userId int, username string, tokenVersion int
 			ID:        xid.New().String(),
 			Issuer:    j.config.Issuer,
 			Audience:  jwt.ClaimStrings{j.config.Audience},
-			ExpiresAt: jwt.NewNumericDate(clock.Now().Add(time.Hour * time.Duration(j.config.ExpirationHours))),
-			IssuedAt:  jwt.NewNumericDate(clock.Now()),
-			NotBefore: jwt.NewNumericDate(clock.Now()),
+			ExpiresAt: jwt.NewNumericDate(j.now().Add(time.Hour * time.Duration(j.config.ExpirationHours))),
+			IssuedAt:  jwt.NewNumericDate(j.now()),
+			NotBefore: jwt.NewNumericDate(j.now()),
 		},
 	}
 

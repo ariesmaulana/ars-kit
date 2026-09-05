@@ -8,10 +8,10 @@ import (
 )
 
 // Job describes a workflow job to be enqueued. Each workflow definition file
-// ships a concrete job type implementing it (see RegisterDemoWorkflow), so
-// business code registers jobs without holding an engine reference:
+// ships a concrete job type implementing it, so business code registers jobs
+// without holding an engine reference:
 //
-//	workflow.Register(ctx, workflow.RegisterDemoWorkflow{TraceId: ..., Payload: ...})
+//	workflow.Register(ctx, workflow.SendEmailJob{TraceId: ..., Payload: ...})
 type Job interface {
 	WorkflowName() string
 	TraceId() string

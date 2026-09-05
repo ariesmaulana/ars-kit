@@ -208,6 +208,53 @@ func TestUserRegister(t *testing.T) {
 						},
 					},
 
+					// ===== Validation Tests: Length limits =====
+					{
+						name: "Should fail when username exceeds 50 characters",
+						input: &input{
+							username: strings.Repeat("u", 51),
+							email:    "toolonguser@example.com",
+							fullName: "Too Long User",
+							password: "password12345",
+						},
+						expected: &expected{
+							success:        false,
+							message:        "Username must be at most 50 characters long",
+							userCreated:    false,
+							workflowQueued: false,
+						},
+					},
+					{
+						name: "Should fail when fullName exceeds 100 characters",
+						input: &input{
+							username: "toolongname",
+							email:    "toolongname@example.com",
+							fullName: strings.Repeat("n", 101),
+							password: "password12345",
+						},
+						expected: &expected{
+							success:        false,
+							message:        "FullName must be at most 100 characters long",
+							userCreated:    false,
+							workflowQueued: false,
+						},
+					},
+					{
+						name: "Should fail when username is only whitespace",
+						input: &input{
+							username: "   ",
+							email:    "whitespaceuser@example.com",
+							fullName: "Whitespace User",
+							password: "password12345",
+						},
+						expected: &expected{
+							success:        false,
+							message:        "Username is mandatory",
+							userCreated:    false,
+							workflowQueued: false,
+						},
+					},
+
 					// ===== Validation Tests: Username =====
 					{
 						name: "Should fail when username is empty",

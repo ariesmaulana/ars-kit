@@ -154,25 +154,3 @@ func (f *fakeStore) Fail(ctx context.Context, id int64, lastErr string) error {
 	f.fails = append(f.fails, failCall{id: id, lastErr: lastErr})
 	return nil
 }
-
-// fakeUserSvc implements workflow.UserService for workflow tests, returning
-// scripted typed outputs and recording every call.
-type fakeUserSvc struct {
-	registerOutput *workflow.RegisterUserOutput
-	grantOutput    *workflow.GrantPermissionOutput
-
-	registerCalls []*workflow.RegisterUserInput
-	grantCalls    []*workflow.GrantPermissionInput
-}
-
-var _ workflow.UserService = (*fakeUserSvc)(nil)
-
-func (f *fakeUserSvc) RegisterUser(ctx context.Context, input *workflow.RegisterUserInput) *workflow.RegisterUserOutput {
-	f.registerCalls = append(f.registerCalls, input)
-	return f.registerOutput
-}
-
-func (f *fakeUserSvc) GrantPermissionSystem(ctx context.Context, input *workflow.GrantPermissionInput) *workflow.GrantPermissionOutput {
-	f.grantCalls = append(f.grantCalls, input)
-	return f.grantOutput
-}

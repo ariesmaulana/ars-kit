@@ -63,6 +63,8 @@ const defaultEmailTokenExpiry = 24 * time.Hour
 
 const (
 	minPasswordLength      = 12
+	maxUsernameLength      = 50
+	maxFullNameLength      = 100
 	passwordHistoryDepth   = 5
 	passwordPolicyErrorMsg = "Password must be at least 12 characters long"
 )
@@ -80,6 +82,11 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 	var cs clock.Source = clock.Real()
 	if len(clockSource) > 0 && clockSource[0] != nil {
 		cs = clockSource[0]
+	}
+	// Keep JWT timestamps consistent with the service clock so mocked sources
+	// produce tokens that align with the rest of the flow.
+	if jwtService != nil {
+		jwtService.SetClockSource(cs)
 	}
 	return &service{
 		storage:           storage,
@@ -118,6 +125,11 @@ func (s *service) issueTokenPair(ctx context.Context, db StorageTx, tokenVersion
 // Register creates a new user account
 func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterOutput {
 	resp := &RegisterOutput{TraceId: input.TraceId}
+
+	// Normalize before validation and storage.
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Username = strings.TrimSpace(input.Username)
+	input.FullName = strings.TrimSpace(input.FullName)
 
 	if msg := validateRegisterInput(input); msg != "" {
 		resp.Message = msg
@@ -227,7 +239,10 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	// worker. Fire-and-forget: the account and token are already committed,
 	// so a queue failure must not fail the registration (a retry would hit
 	// "already exists"). The client can re-request via /send-verification.
-	if err := s.queueEmail(ctx, input.TraceId, email.EmailMessage{
+	// Detach from the request context: the account and token are already
+	// committed, so a cancelled request must not drop the verification email.
+	// WithoutCancel keeps trace/values but ignores the parent's cancellation.
+	if err := s.queueEmail(context.WithoutCancel(ctx), input.TraceId, email.EmailMessage{
 		To:      []string{data.Email},
 		Subject: "Verify your email address",
 		Text: "Hi " + data.FullName + ",\n\n" +
@@ -263,6 +278,10 @@ func validateRegisterInput(input *RegisterInput) string {
 		log.Warn().Msg("Username too short")
 		return "Username must be at least 5 characters long"
 	}
+	if len(input.Username) > maxUsernameLength {
+		log.Warn().Msg("Username too long")
+		return "Username must be at most 50 characters long"
+	}
 	if input.Email == "" {
 		log.Warn().Msg("Email empty")
 		return "Email is mandatory"
@@ -282,6 +301,10 @@ func validateRegisterInput(input *RegisterInput) string {
 	if input.FullName == "" {
 		log.Warn().Msg("FullName empty")
 		return "FullName is mandatory"
+	}
+	if len(input.FullName) > maxFullNameLength {
+		log.Warn().Msg("FullName too long")
+		return "FullName must be at most 100 characters long"
 	}
 	return ""
 }
@@ -597,6 +620,30 @@ func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutp
 			Msg("Failed to get refresh token owner")
 		resp.Message = "Invalid or expired refresh token"
 		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	// Mirror the Login gates: a disabled account or an unverified email must
+	// not be able to keep refreshing an existing session. Without these checks
+	// a fresh Register issues a refresh pair that outlives the email-verification
+	// gate — Login blocks unverified accounts, but Refresh never did.
+	if user.Status != UserStatusActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", user.Id).
+			Str("status", string(user.Status)).
+			Msg("Refresh blocked: account disabled")
+		resp.Message = "Account disabled"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+	if user.EmailVerifiedAt == nil {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", user.Id).
+			Msg("Refresh blocked: email not verified")
+		resp.Message = "Email not verified"
+		resp.ErrorCode = ErrorCodeForbidden
 		return resp
 	}
 
