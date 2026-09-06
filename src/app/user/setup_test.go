@@ -6,7 +6,6 @@ import (
 
 	"github.com/ariesmaulana/ars-kit/database"
 	permissionfakes "github.com/ariesmaulana/ars-kit/src/app/permission/fakes"
-	"github.com/ariesmaulana/ars-kit/src/app/upload"
 	"github.com/ariesmaulana/ars-kit/src/app/user"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 	testsuite "github.com/ariesmaulana/ars-kit/testing"
@@ -67,7 +66,7 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,
 	})
-	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, nil, clockSource...)
+	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, "", clockSource...)
 
 	return &UserApp{
 		AppContext:        app,
@@ -78,9 +77,9 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 	}
 }
 
-// initUserAppWithUploader is initUserApp with a caller-provided avatar
-// uploader, for tests that exercise UploadAvatar against a fake backend.
-func initUserAppWithUploader(app *testsuite.AppContext, uploader upload.Uploader) *UserApp {
+// initUserAppWithStagingDir is initUserApp with a caller-provided avatar
+// staging dir, for tests that exercise the async UploadAvatar spool path.
+func initUserAppWithStagingDir(app *testsuite.AppContext, stagingDir string) *UserApp {
 	helper := NewTestHelper(app.Pool)
 	storage := user.NewStorage(app.Pool)
 	permissionService := &permissionfakes.ServiceFake{}
@@ -88,7 +87,7 @@ func initUserAppWithUploader(app *testsuite.AppContext, uploader upload.Uploader
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,
 	})
-	service := user.NewService(storage, permissionService, user.DefaultLoginThrottleConfig(), jwtService, user.EmailConfig{}, uploader)
+	service := user.NewService(storage, permissionService, user.DefaultLoginThrottleConfig(), jwtService, user.EmailConfig{}, stagingDir)
 
 	return &UserApp{
 		AppContext:        app,

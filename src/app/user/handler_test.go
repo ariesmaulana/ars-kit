@@ -869,11 +869,7 @@ func TestHandlerUploadAvatar_Success(t *testing.T) {
 
 	fake.UploadAvatarReturns(&user.UploadAvatarOutput{
 		Success: true,
-		Message: "Avatar updated successfully",
-		Key:     "avatars/xid.jpg",
-		MIME:    "image/jpeg",
-		Size:    1234,
-		User:    user.User{Id: 7, AvatarKey: strPtr("avatars/xid.jpg")},
+		Message: "Avatar upload accepted",
 	})
 
 	var buf bytes.Buffer
@@ -888,17 +884,12 @@ func TestHandlerUploadAvatar_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, http.StatusAccepted, rec.Code)
 
 	var resp user.AvatarUploadResponse
 	decodeJSON(t, rec, &resp)
 	assert.True(t, resp.Success)
-	assert.Equal(t, "avatars/xid.jpg", resp.Key)
-	assert.Equal(t, "image/jpeg", resp.MIME)
-	assert.Equal(t, int64(1234), resp.Size)
-	assert.NotNil(t, resp.Data)
-	assert.Equal(t, 7, resp.Data.Id)
-	assert.Equal(t, "avatars/xid.jpg", *resp.Data.AvatarKey)
+	assert.Equal(t, "Avatar upload accepted", resp.Message)
 
 	require.Equal(t, 1, fake.UploadAvatarCallCount())
 	_, input := fake.UploadAvatarArgsForCall(0)

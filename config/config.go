@@ -67,6 +67,7 @@ type Config struct {
 	// "s3". Local writes to UploadLocalBaseDir; s3 uses the R2/S3 settings.
 	UploadStorage           string // "local" | "s3"
 	UploadLocalBaseDir      string // local avatar directory, e.g. "./storage/avatars"
+	UploadStagingDir        string // local spool dir for async avatar uploads, e.g. "./storage/upload-staging" (must be shared with worker)
 	UploadS3Bucket          string
 	UploadS3Region          string // "auto" for R2, e.g. "ap-southeast-1" for S3
 	UploadS3Endpoint        string // R2: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
@@ -187,6 +188,7 @@ func InitConfig() (*Config, error) {
 	// Avatar upload
 	cfg.UploadStorage = getEnvOrDefault("UPLOAD_STORAGE", envs, "local")
 	cfg.UploadLocalBaseDir = getEnvOrDefault("UPLOAD_LOCAL_BASE_DIR", envs, "./storage/avatars")
+	cfg.UploadStagingDir = getEnvOrDefault("UPLOAD_STAGING_DIR", envs, "./storage/upload-staging")
 	cfg.UploadS3Bucket = getEnv("UPLOAD_S3_BUCKET", envs)
 	cfg.UploadS3Region = getEnvOrDefault("UPLOAD_S3_REGION", envs, "auto")
 	cfg.UploadS3Endpoint = getEnv("UPLOAD_S3_ENDPOINT", envs)

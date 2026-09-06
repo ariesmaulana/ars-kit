@@ -93,7 +93,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	// Public routes
 	public := users.Group("", authLimiter)
 	public.POST("/register", h.Register)
-	
+
 	public.POST("/login", h.Login)
 	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
@@ -732,25 +732,26 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 }
 
 // AvatarUploadResponse represents the HTTP response for avatar upload.
+// The upload runs async in the avatar_upload workflow, so the endpoint
+// answers 202 with an acceptance only; the client re-fetches the profile
+// to see the new avatar once the worker finishes.
 type AvatarUploadResponse struct {
-	Success bool     `json:"success"`
-	Message string   `json:"message"`
-	Key     string   `json:"key,omitempty"`
-	MIME    string   `json:"mime,omitempty"`
-	Size    int64    `json:"size,omitempty"`
-	Data    *UserDTO `json:"data,omitempty"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
 }
 
 // UploadAvatar handles PUT /api/v1/users/profile/avatar
 // @Summary Upload profile avatar
 // @Description Upload a profile photo. Accepts multipart form field "avatar";
-// @Description only jpeg/png/webp up to 2MB.
+// @Description only jpeg/png/webp up to 2MB. The file is staged and uploaded
+// @Description asynchronously by the avatar_upload workflow: a 202 means the
+// @Description upload was accepted, not stored. Re-fetch the profile to see it.
 // @Tags users
 // @Accept multipart/form-data
 // @Produce json
 // @Security BearerAuth
 // @Param avatar formData file true "Avatar image file"
-// @Success 200 {object} AvatarUploadResponse
+// @Success 202 {object} AvatarUploadResponse
 // @Failure 400 {object} AvatarUploadResponse
 // @Failure 401 {object} AvatarUploadResponse
 // @Failure 403 {object} AvatarUploadResponse
@@ -799,14 +800,9 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 		})
 	}
 
-	dto := toUserDTO(output.User)
-	return c.JSON(http.StatusOK, AvatarUploadResponse{
+	return c.JSON(http.StatusAccepted, AvatarUploadResponse{
 		Success: true,
 		Message: output.Message,
-		Key:     output.Key,
-		MIME:    output.MIME,
-		Size:    output.Size,
-		Data:    &dto,
 	})
 }
 

@@ -87,9 +87,9 @@ type Service interface {
 	// die immediately; an actor cannot disable/suspend their own account.
 	UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput
 
-	// UploadAvatar uploads a profile photo via the upload foundation lib,
-	// persists the storage key to users.avatar_key, and best-effort cleans up
-	// any previous avatar file.
+	// UploadAvatar validates a profile photo, spools it to the staging dir,
+	// and enqueues the avatar_upload workflow. Async: success means the
+	// upload was accepted, not stored.
 	UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput
 }
 
@@ -445,18 +445,15 @@ type UploadAvatarInput struct {
 	SizeHint int64
 }
 
-// UploadAvatarOutput is the result of a profile-photo upload. On success it
-// also returns the updated User so the handler can mirror the change back to
-// the client without an extra read.
+// UploadAvatarOutput is the acceptance result of a profile-photo upload.
+// The upload itself runs in the avatar_upload workflow, so on success there
+// is no key, MIME, size, or updated User yet — only the trace id the client
+// can correlate with. Clients re-fetch the profile to see the new avatar.
 type UploadAvatarOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string
 	ErrorCode ErrorCode
-	Key       string
-	MIME      string
-	Size      int64
-	User      User
 }
 
 // EmailConfig groups the configuration the user service needs for

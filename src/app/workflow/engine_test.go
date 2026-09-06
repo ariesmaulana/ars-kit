@@ -24,7 +24,7 @@ func (s *dummyStep) Run(ctx context.Context, run *workflow.Run) error {
 }
 
 // demoDefinition builds a small two-step workflow standing in for domain
-// workflows (SendEmail/AvatarCleanup) in engine/worker tests. It must stay
+// workflows in engine/worker tests. It must stay
 // self-contained: workflow is a foundation lib and cannot depend on domains.
 func demoDefinition() *workflow.Definition {
 	return &workflow.Definition{

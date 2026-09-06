@@ -226,7 +226,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upload a profile photo. Accepts multipart form field \"avatar\";\nonly jpeg/png/webp up to 2MB.",
+                "description": "Upload a profile photo. Accepts multipart form field \"avatar\";\nonly jpeg/png/webp up to 2MB. The file is staged and uploaded\nasynchronously by the avatar_upload workflow: a 202 means the\nupload was accepted, not stored. Re-fetch the profile to see it.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -247,8 +247,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/user.AvatarUploadResponse"
                         }
@@ -485,52 +485,6 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/user.AuthResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/user.AuthResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/user.AuthResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/api/v1/users/register-workflow": {
-            "post": {
-                "description": "Validate the input and enqueue a register_user workflow job.\nThe user is created and granted its permission by background\nworkers instead of synchronously in the request.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Register a user asynchronously via the workflow engine",
-                "parameters": [
-                    {
-                        "description": "User registration data",
-                        "name": "user",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/user.RegisterRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Accepted",
                         "schema": {
                             "$ref": "#/definitions/user.AuthResponse"
                         }
@@ -1029,20 +983,8 @@ const docTemplate = `{
         "user.AvatarUploadResponse": {
             "type": "object",
             "properties": {
-                "data": {
-                    "$ref": "#/definitions/user.UserDTO"
-                },
-                "key": {
-                    "type": "string"
-                },
                 "message": {
                     "type": "string"
-                },
-                "mime": {
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
                 },
                 "success": {
                     "type": "boolean"
@@ -1143,16 +1085,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "full_name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 100
                 },
                 "password": {
                     "type": "string",
-                    "minLength": 6
+                    "minLength": 12
                 },
                 "username": {
                     "type": "string",
                     "maxLength": 50,
-                    "minLength": 3
+                    "minLength": 5
                 }
             }
         },

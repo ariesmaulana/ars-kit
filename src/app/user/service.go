@@ -4,17 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
-	"github.com/ariesmaulana/ars-kit/src/app/upload"
 	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 )
@@ -55,8 +58,16 @@ type service struct {
 	jwtService        *JWTService
 	clockSource       clock.Source
 	emailCfg          EmailConfig
-	avatarUploader    upload.Uploader
+	// stagingDir is the local directory avatar uploads are spooled to
+	// before the avatar_upload workflow picks them up. The serve and
+	// worker processes must share this filesystem.
+	stagingDir string
 }
+
+// maxAvatarStagingBytes caps the bytes spooled to the staging dir per
+// request. It must stay in sync with the avatar uploader's MaxSizeBytes
+// (wired in main); the worker's uploader re-enforces the same limit.
+const maxAvatarStagingBytes = 2 * 1024 * 1024
 
 // defaultEmailTokenExpiry is used when EmailConfig.TokenExpiry is zero.
 const defaultEmailTokenExpiry = 24 * time.Hour
@@ -75,7 +86,7 @@ const (
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
 // server-side. emailCfg wires the email flows (forgot-password, verification).
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, avatarUploader upload.Uploader, clockSource ...clock.Source) Service {
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, stagingDir string, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
 	}
@@ -95,7 +106,7 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 		jwtService:        jwtService,
 		clockSource:       cs,
 		emailCfg:          emailCfg,
-		avatarUploader:    avatarUploader,
+		stagingDir:        stagingDir,
 	}
 }
 
@@ -1084,10 +1095,12 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	return resp
 }
 
-// UploadAvatar uploads a profile photo for the authenticated user. It calls
-// the upload foundation lib, persists the resulting storage key to
-// users.avatar_key, and best-effort deletes the previous avatar file after the
-// new one is committed — if the new upload fails the old avatar stays intact.
+// UploadAvatar accepts a profile photo for the authenticated user and hands
+// it to the avatar_upload workflow. The request path only validates the
+// input, spools the bytes to a local staging file, and enqueues the job —
+// the slow object-store PUT, the users.avatar_key write, and the old-avatar
+// cleanup all happen in the worker (UploadFile → Cleanup steps). The caller
+// gets 202 semantics: success here means "accepted", not "stored".
 func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput {
 	resp := &UploadAvatarOutput{TraceId: input.TraceId}
 
@@ -1109,50 +1122,31 @@ func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *U
 		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
-
-	// Upload to the storage backend. The lib validates MIME sniffing +
-	// extension cross-check + size enforcement.
-	result, err := s.avatarUploader.Upload(ctx, upload.UploadRequest{
-		Reader:   input.Reader,
-		Filename: input.Filename,
-		SizeHint: input.SizeHint,
-	})
-	if err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Avatar upload failed")
-		if errors.Is(err, upload.ErrInvalidMIME) {
-			resp.Message = "unsupported image type — use jpeg/png/webp"
-			resp.ErrorCode = ErrorCodeValidation
-			return resp
-		}
-		if errors.Is(err, upload.ErrTooLarge) {
-			resp.Message = "avatar must be ≤ 2MB"
-			resp.ErrorCode = ErrorCodeValidation
-			return resp
-		}
-		if errors.Is(err, upload.ErrBadRequest) {
-			resp.Message = err.Error()
-			resp.ErrorCode = ErrorCodeValidation
-			return resp
-		}
-		resp.Message = "upload failed"
-		resp.ErrorCode = ErrorCodeInternal
+	if strings.TrimSpace(input.Filename) == "" {
+		log.Warn().Msg("Filename empty")
+		resp.Message = "avatar filename is required"
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
-	// Begin transaction
+	// Mint the storage key up front so request-time reads (old key) and the
+	// worker share one stable key across retries.
+	ext := strings.ToLower(filepath.Ext(input.Filename))
+	key := xid.New().String() + ext
+
+	// Read the previous avatar key under a row lock so concurrent uploads
+	// serialize and the worker cleans up the right file. Read-only: the
+	// avatar_key write itself happens in the workflow's UploadFile step.
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = "Failed to update avatar"
+		resp.Message = "Failed to accept avatar upload"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
-	defer db.Rollback()
-
-	// Lock user row to serialize concurrent avatar changes and read the
-	// previous avatar key for cleanup.
 	user, errType, err := db.LockUserById(ctx, input.Id)
 	if err != nil {
+		_ = db.Rollback()
 		if errType == ErrTypeNotFound {
 			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
 			resp.Message = "User not found"
@@ -1160,7 +1154,7 @@ func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *U
 			return resp
 		}
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
-		resp.Message = "Failed to update avatar"
+		resp.Message = "Failed to accept avatar upload"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
@@ -1168,53 +1162,75 @@ func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *U
 	if user.AvatarKey != nil {
 		oldKey = *user.AvatarKey
 	}
-
-	// Persist the new key
-	if err := db.UpdateAvatarKey(ctx, input.Id, result.Key); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to save avatar key")
-		// Best-effort cleanup — don't leave an orphan file.
-		s.cleanupOrphan(result.Key, input.TraceId)
-		resp.Message = "Failed to update avatar"
+	if err := db.Rollback(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to rollback avatar read tx")
+		resp.Message = "Failed to accept avatar upload"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
-	if err := db.Commit(); err != nil {
-		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to commit avatar update")
-		// Best-effort cleanup — don't leave an orphan file.
-		s.cleanupOrphan(result.Key, input.TraceId)
-		resp.Message = "Failed to update avatar"
-		resp.ErrorCode = ErrorCodeInternal
+	// Spool the multipart bytes to a staging file. Local disk is fast;
+	// the size cap rejects abusive bodies before they reach the queue.
+	stagedPath, err := s.stageAvatar(input.TraceId, key, input.Reader)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to stage avatar file")
+		resp.Message = err.Error()
+		resp.ErrorCode = ErrorCodeValidation
 		return resp
 	}
 
-	// Cleanup the previous avatar file through the workflow engine — the
-	// request never blocks on it and failed deletes are retried by workers.
-	// Delete is idempotent (NotFound = nil) and never fails on empty keys.
-	if oldKey != "" && oldKey != result.Key {
-		if _, err := workflow.Register(ctx, workflow.NewDeleteAvatarJob(input.TraceId, oldKey)); err != nil {
-			log.Err(err).Str("traceId", input.TraceId).Str("key", oldKey).Msg("Failed to queue old avatar cleanup")
+	_, regErr := workflow.Register(ctx, workflow.NewAvatarUploadJob(input.TraceId, workflow.AvatarUploadPayload{
+		UserID:     input.Id,
+		Key:        key,
+		StagedPath: stagedPath,
+		Filename:   input.Filename,
+		SizeHint:   input.SizeHint,
+		OldKey:     oldKey,
+	}))
+	if regErr != nil {
+		log.Err(regErr).Str("traceId", input.TraceId).Msg("Failed to queue avatar upload")
+		// Best-effort: don't leave a staged file no worker will consume.
+		if rerr := os.RemoveAll(filepath.Dir(stagedPath)); rerr != nil && !os.IsNotExist(rerr) {
+			log.Err(rerr).Str("traceId", input.TraceId).Str("staged_path", stagedPath).Msg("Failed to remove orphan staged avatar")
 		}
+		resp.Message = "Failed to accept avatar upload"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
 	}
 
-	user.AvatarKey = &result.Key
 	resp.Success = true
-	resp.Message = "Avatar updated successfully"
-	resp.Key = result.Key
-	resp.MIME = result.MIME
-	resp.Size = result.Size
-	resp.User = user
-
+	resp.Message = "Avatar upload accepted"
 	return resp
 }
 
-// cleanupOrphan best-effort removes a freshly-uploaded key that was never
-// committed to the DB. Context is detached: cleanup must run even if the
-// request is cancelled.
-func (s *service) cleanupOrphan(key, traceId string) {
-	if derr := s.avatarUploader.Delete(context.Background(), key); derr != nil {
-		log.Err(derr).Str("traceId", traceId).Str("key", key).Msg("Failed to clean up orphan avatar")
+// stageAvatar copies the request body to stagingDir/<traceId>/<key>,
+// enforcing the avatar size cap. The returned path is absolute. On failure
+// the whole trace dir is removed so rejected uploads leave nothing behind.
+func (s *service) stageAvatar(traceId, key string, r io.Reader) (string, error) {
+	if strings.TrimSpace(s.stagingDir) == "" {
+		return "", fmt.Errorf("avatar staging is not configured")
 	}
+	dir := filepath.Join(s.stagingDir, traceId)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	stagedPath := filepath.Join(dir, key)
+
+	limited := io.LimitReader(r, maxAvatarStagingBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	if int64(len(data)) > maxAvatarStagingBytes {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("avatar must be ≤ 2MB")
+	}
+	if err := os.WriteFile(stagedPath, data, 0o644); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	return stagedPath, nil
 }
 
 // ListUsers lists users for an admin. The actor must hold the super_user

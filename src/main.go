@@ -165,13 +165,13 @@ func buildApp(conf *config.Config, db *database.PostgresDB) *App {
 	}, jwtService, user.EmailConfig{
 		AppURL:      conf.AppURL,
 		TokenExpiry: time.Duration(conf.EmailTokenExpiryHours) * time.Hour,
-	}, avatarUploader)
+	}, conf.UploadStagingDir)
 
 	// Register workflow definitions that depend on app modules, then install
 	// the engine for the package-level workflow.Register.
 	workflowEngine.Register(
 		workflow.SendEmailWorkflow(emailSender),
-		workflow.AvatarCleanupWorkflow(avatarUploader),
+		workflow.AvatarUploadWorkflow(avatarUploader, user.NewAvatarKeyUpdater(userStorage)),
 	)
 	workflow.SetDefault(workflowEngine)
 
