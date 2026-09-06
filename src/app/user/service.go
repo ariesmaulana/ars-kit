@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/rs/xid"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/ariesmaulana/ars-kit/src/app/notification/email"
 	"github.com/ariesmaulana/ars-kit/src/app/permission"
+	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 	"github.com/ariesmaulana/ars-kit/src/clock"
 )
 
@@ -52,13 +58,24 @@ type service struct {
 	jwtService        *JWTService
 	clockSource       clock.Source
 	emailCfg          EmailConfig
+	// stagingDir is the local directory avatar uploads are spooled to
+	// before the avatar_upload workflow picks them up. The serve and
+	// worker processes must share this filesystem.
+	stagingDir string
 }
+
+// maxAvatarStagingBytes caps the bytes spooled to the staging dir per
+// request. It must stay in sync with the avatar uploader's MaxSizeBytes
+// (wired in main); the worker's uploader re-enforces the same limit.
+const maxAvatarStagingBytes = 2 * 1024 * 1024
 
 // defaultEmailTokenExpiry is used when EmailConfig.TokenExpiry is zero.
 const defaultEmailTokenExpiry = 24 * time.Hour
 
 const (
 	minPasswordLength      = 12
+	maxUsernameLength      = 50
+	maxFullNameLength      = 100
 	passwordHistoryDepth   = 5
 	passwordPolicyErrorMsg = "Password must be at least 12 characters long"
 )
@@ -69,13 +86,18 @@ const (
 // jwtService issues access and refresh tokens; the service persists every
 // refresh token hash it hands out so rotation and revocation are enforced
 // server-side. emailCfg wires the email flows (forgot-password, verification).
-func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, clockSource ...clock.Source) Service {
+func NewService(storage Storage, permissionService permission.Service, throttle LoginThrottleConfig, jwtService *JWTService, emailCfg EmailConfig, stagingDir string, clockSource ...clock.Source) Service {
 	if throttle.MaxFailedAttempts <= 0 || throttle.FailedWindow <= 0 || throttle.LockoutDuration <= 0 {
 		throttle = DefaultLoginThrottleConfig()
 	}
 	var cs clock.Source = clock.Real()
 	if len(clockSource) > 0 && clockSource[0] != nil {
 		cs = clockSource[0]
+	}
+	// Keep JWT timestamps consistent with the service clock so mocked sources
+	// produce tokens that align with the rest of the flow.
+	if jwtService != nil {
+		jwtService.SetClockSource(cs)
 	}
 	return &service{
 		storage:           storage,
@@ -84,6 +106,7 @@ func NewService(storage Storage, permissionService permission.Service, throttle 
 		jwtService:        jwtService,
 		clockSource:       cs,
 		emailCfg:          emailCfg,
+		stagingDir:        stagingDir,
 	}
 }
 
@@ -113,6 +136,11 @@ func (s *service) issueTokenPair(ctx context.Context, db StorageTx, tokenVersion
 // Register creates a new user account
 func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterOutput {
 	resp := &RegisterOutput{TraceId: input.TraceId}
+
+	// Normalize before validation and storage.
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Username = strings.TrimSpace(input.Username)
+	input.FullName = strings.TrimSpace(input.FullName)
 
 	if msg := validateRegisterInput(input); msg != "" {
 		resp.Message = msg
@@ -159,9 +187,13 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	}
 
 	// Record the initial password hash so future change-password reuse checks
-	// cover it. Non-fatal: the user is already created.
+	// cover it. Failure is fatal: the insert is still inside the transaction,
+	// so a return rolls back the user row and keeps registration atomic.
 	if err := db.InsertPasswordHistory(ctx, insertedId, string(hashedPassword)); err != nil {
-		log.Warn().Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to record password history")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
 	}
 
 	data, err := db.GetUserById(ctx, insertedId)
@@ -192,12 +224,45 @@ func (s *service) Register(ctx context.Context, input *RegisterInput) *RegisterO
 	resp.AccessToken = accessToken
 	resp.RefreshToken = refreshToken
 
+	// Create the email-verification token in the same transaction so the
+	// account and its verification token commit atomically. Without this,
+	// Register creates an account that can never receive its verification
+	// email (login is blocked until email_verified_at is set).
+	verifyToken, err := s.generateAndStoreToken(ctx, db, insertedId, EmailTokenPurposeEmailVerification)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("failed to create verification token")
+		resp.Message = "Failed to register user"
+		resp.ErrorCode = ErrorCodeInternal
+		resp.AccessToken = ""
+		resp.RefreshToken = ""
+		return resp
+	}
+
 	err = db.Commit()
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
 		resp.Message = "Failed to register user"
 		resp.ErrorCode = ErrorCodeInternal
 		return resp
+	}
+
+	// Queue the verification email for delivery by the send_email workflow
+	// worker. Fire-and-forget: the account and token are already committed,
+	// so a queue failure must not fail the registration (a retry would hit
+	// "already exists"). The client can re-request via /send-verification.
+	// Detach from the request context: the account and token are already
+	// committed, so a cancelled request must not drop the verification email.
+	// WithoutCancel keeps trace/values but ignores the parent's cancellation.
+	if err := s.queueEmail(context.WithoutCancel(ctx), input.TraceId, email.EmailMessage{
+		To:      []string{data.Email},
+		Subject: "Verify your email address",
+		Text: "Hi " + data.FullName + ",\n\n" +
+			"Thanks for signing up. Please verify your email address by opening the link below.\n" +
+			"It expires in " + fmtDuration(s.tokenExpiry()) + ":\n\n" +
+			s.buildVerifyLink(verifyToken) + "\n\n" +
+			"If you didn't create this account, ignore this email.\n",
+	}); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Int("userId", insertedId).Msg("verification email not queued; re-request via send-verification")
 	}
 
 	log.Info().
@@ -224,6 +289,10 @@ func validateRegisterInput(input *RegisterInput) string {
 		log.Warn().Msg("Username too short")
 		return "Username must be at least 5 characters long"
 	}
+	if len(input.Username) > maxUsernameLength {
+		log.Warn().Msg("Username too long")
+		return "Username must be at most 50 characters long"
+	}
 	if input.Email == "" {
 		log.Warn().Msg("Email empty")
 		return "Email is mandatory"
@@ -243,6 +312,10 @@ func validateRegisterInput(input *RegisterInput) string {
 	if input.FullName == "" {
 		log.Warn().Msg("FullName empty")
 		return "FullName is mandatory"
+	}
+	if len(input.FullName) > maxFullNameLength {
+		log.Warn().Msg("FullName too long")
+		return "FullName must be at most 100 characters long"
 	}
 	return ""
 }
@@ -558,6 +631,30 @@ func (s *service) Refresh(ctx context.Context, input *RefreshInput) *RefreshOutp
 			Msg("Failed to get refresh token owner")
 		resp.Message = "Invalid or expired refresh token"
 		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+
+	// Mirror the Login gates: a disabled account or an unverified email must
+	// not be able to keep refreshing an existing session. Without these checks
+	// a fresh Register issues a refresh pair that outlives the email-verification
+	// gate — Login blocks unverified accounts, but Refresh never did.
+	if user.Status != UserStatusActive {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", user.Id).
+			Str("status", string(user.Status)).
+			Msg("Refresh blocked: account disabled")
+		resp.Message = "Account disabled"
+		resp.ErrorCode = ErrorCodeUnauthorized
+		return resp
+	}
+	if user.EmailVerifiedAt == nil {
+		log.Info().
+			Str("traceId", input.TraceId).
+			Int("userId", user.Id).
+			Msg("Refresh blocked: email not verified")
+		resp.Message = "Email not verified"
+		resp.ErrorCode = ErrorCodeForbidden
 		return resp
 	}
 
@@ -996,6 +1093,144 @@ func (s *service) GetProfileById(ctx context.Context, input *GetProfileByIdInput
 	resp.User = user
 
 	return resp
+}
+
+// UploadAvatar accepts a profile photo for the authenticated user and hands
+// it to the avatar_upload workflow. The request path only validates the
+// input, spools the bytes to a local staging file, and enqueues the job —
+// the slow object-store PUT, the users.avatar_key write, and the old-avatar
+// cleanup all happen in the worker (UploadFile → Cleanup steps). The caller
+// gets 202 semantics: success here means "accepted", not "stored".
+func (s *service) UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput {
+	resp := &UploadAvatarOutput{TraceId: input.TraceId}
+
+	if input.TraceId == "" {
+		log.Warn().Msg("TraceId empty")
+		resp.Message = "TraceId is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Id == 0 {
+		log.Warn().Msg("User ID empty")
+		resp.Message = "User ID is mandatory"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if input.Reader == nil {
+		log.Warn().Msg("Reader is nil")
+		resp.Message = "avatar file is required"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+	if strings.TrimSpace(input.Filename) == "" {
+		log.Warn().Msg("Filename empty")
+		resp.Message = "avatar filename is required"
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	// Mint the storage key up front so request-time reads (old key) and the
+	// worker share one stable key across retries.
+	ext := strings.ToLower(filepath.Ext(input.Filename))
+	key := xid.New().String() + ext
+
+	// Read the previous avatar key under a row lock so concurrent uploads
+	// serialize and the worker cleans up the right file. Read-only: the
+	// avatar_key write itself happens in the workflow's UploadFile step.
+	db, err := s.storage.BeginTx(ctx)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
+		resp.Message = "Failed to accept avatar upload"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	user, errType, err := db.LockUserById(ctx, input.Id)
+	if err != nil {
+		_ = db.Rollback()
+		if errType == ErrTypeNotFound {
+			log.Err(err).Str("traceId", input.TraceId).Msg("User not found")
+			resp.Message = "User not found"
+			resp.ErrorCode = ErrorCodeValidation
+			return resp
+		}
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to lock user")
+		resp.Message = "Failed to accept avatar upload"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+	oldKey := ""
+	if user.AvatarKey != nil {
+		oldKey = *user.AvatarKey
+	}
+	if err := db.Rollback(); err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to rollback avatar read tx")
+		resp.Message = "Failed to accept avatar upload"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	// Spool the multipart bytes to a staging file. Local disk is fast;
+	// the size cap rejects abusive bodies before they reach the queue.
+	stagedPath, err := s.stageAvatar(input.TraceId, key, input.Reader)
+	if err != nil {
+		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to stage avatar file")
+		resp.Message = err.Error()
+		resp.ErrorCode = ErrorCodeValidation
+		return resp
+	}
+
+	_, regErr := workflow.Register(ctx, workflow.NewAvatarUploadJob(input.TraceId, workflow.AvatarUploadPayload{
+		UserID:     input.Id,
+		Key:        key,
+		StagedPath: stagedPath,
+		Filename:   input.Filename,
+		SizeHint:   input.SizeHint,
+		OldKey:     oldKey,
+	}))
+	if regErr != nil {
+		log.Err(regErr).Str("traceId", input.TraceId).Msg("Failed to queue avatar upload")
+		// Best-effort: don't leave a staged file no worker will consume.
+		if rerr := os.RemoveAll(filepath.Dir(stagedPath)); rerr != nil && !os.IsNotExist(rerr) {
+			log.Err(rerr).Str("traceId", input.TraceId).Str("staged_path", stagedPath).Msg("Failed to remove orphan staged avatar")
+		}
+		resp.Message = "Failed to accept avatar upload"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
+
+	resp.Success = true
+	resp.Message = "Avatar upload accepted"
+	return resp
+}
+
+// stageAvatar copies the request body to stagingDir/<traceId>/<key>,
+// enforcing the avatar size cap. The returned path is absolute. On failure
+// the whole trace dir is removed so rejected uploads leave nothing behind.
+func (s *service) stageAvatar(traceId, key string, r io.Reader) (string, error) {
+	if strings.TrimSpace(s.stagingDir) == "" {
+		return "", fmt.Errorf("avatar staging is not configured")
+	}
+	dir := filepath.Join(s.stagingDir, traceId)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	stagedPath := filepath.Join(dir, key)
+
+	limited := io.LimitReader(r, maxAvatarStagingBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	if int64(len(data)) > maxAvatarStagingBytes {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("avatar must be ≤ 2MB")
+	}
+	if err := os.WriteFile(stagedPath, data, 0o644); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("failed to stage avatar file")
+	}
+	return stagedPath, nil
 }
 
 // ListUsers lists users for an admin. The actor must hold the super_user

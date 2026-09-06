@@ -50,18 +50,31 @@ type Config struct {
 	LoginLockoutMinutes      int // Lock duration in minutes (default: 15)
 
 	// Email notification (foundation module)
-	EmailProvider string // "smtp" (default), "resend", "brevo"
-	AppURL        string // frontend base URL for email links (e.g. "http://localhost:3000")
-	EmailTokenExpiryHours int // hours a reset/verify token stays valid (default: 24)
-	SMTPHost      string // default: smtp.gmail.com
-	SMTPPort      int    // default: 587
-	SMTPUsername  string // required if provider=smtp
-	SMTPPassword  string // Gmail: app password, not account password
-	SMTPFrom      string // required if provider=smtp
-	ResendAPIKey  string // required if provider=resend
-	ResendFrom    string // required if provider=resend
-	BrevoAPIKey   string // required if provider=brevo
-	BrevoFrom     string // required if provider=brevo
+	EmailProvider         string // "smtp" (default), "resend", "brevo"
+	AppURL                string // frontend base URL for email links (e.g. "http://localhost:3000")
+	EmailTokenExpiryHours int    // hours a reset/verify token stays valid (default: 24)
+	SMTPHost              string // default: smtp.gmail.com
+	SMTPPort              int    // default: 587
+	SMTPUsername          string // required if provider=smtp
+	SMTPPassword          string // Gmail: app password, not account password
+	SMTPFrom              string // required if provider=smtp
+	ResendAPIKey          string // required if provider=resend
+	ResendFrom            string // required if provider=resend
+	BrevoAPIKey           string // required if provider=brevo
+	BrevoFrom             string // required if provider=brevo
+
+	// Avatar upload (foundation upload lib). Storage: "local" (default) or
+	// "s3". Local writes to UploadLocalBaseDir; s3 uses the R2/S3 settings.
+	UploadStorage           string // "local" | "s3"
+	UploadLocalBaseDir      string // local avatar directory, e.g. "./storage/avatars"
+	UploadStagingDir        string // local spool dir for async avatar uploads, e.g. "./storage/upload-staging" (must be shared with worker)
+	UploadS3Bucket          string
+	UploadS3Region          string // "auto" for R2, e.g. "ap-southeast-1" for S3
+	UploadS3Endpoint        string // R2: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+	UploadS3AccessKeyID     string
+	UploadS3SecretAccessKey string
+	UploadS3Prefix          string // optional key prefix, e.g. "avatars"
+	UploadS3UsePathStyle    bool
 }
 
 // InitConfig loads configuration from .env file (if present) or OS environment.
@@ -171,6 +184,21 @@ func InitConfig() (*Config, error) {
 	cfg.ResendFrom = getEnv("RESEND_FROM", envs)
 	cfg.BrevoAPIKey = getEnv("BREVO_API_KEY", envs)
 	cfg.BrevoFrom = getEnv("BREVO_FROM", envs)
+
+	// Avatar upload
+	cfg.UploadStorage = getEnvOrDefault("UPLOAD_STORAGE", envs, "local")
+	cfg.UploadLocalBaseDir = getEnvOrDefault("UPLOAD_LOCAL_BASE_DIR", envs, "./storage/avatars")
+	cfg.UploadStagingDir = getEnvOrDefault("UPLOAD_STAGING_DIR", envs, "./storage/upload-staging")
+	cfg.UploadS3Bucket = getEnv("UPLOAD_S3_BUCKET", envs)
+	cfg.UploadS3Region = getEnvOrDefault("UPLOAD_S3_REGION", envs, "auto")
+	cfg.UploadS3Endpoint = getEnv("UPLOAD_S3_ENDPOINT", envs)
+	cfg.UploadS3AccessKeyID = getEnv("UPLOAD_S3_ACCESS_KEY_ID", envs)
+	cfg.UploadS3SecretAccessKey = getEnv("UPLOAD_S3_SECRET_ACCESS_KEY", envs)
+	cfg.UploadS3Prefix = getEnv("UPLOAD_S3_PREFIX", envs)
+	cfg.UploadS3UsePathStyle, err = parseBoolEnv("UPLOAD_S3_USE_PATH_STYLE", envs, true)
+	if err != nil {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -315,4 +343,18 @@ func getEnvOrDefault(key string, dotEnvMap map[string]string, defaultValue strin
 		return val
 	}
 	return defaultValue
+}
+
+// parseBoolEnv parses a boolean environment variable with a default value.
+// Returns error if the env var is set but not a valid boolean.
+func parseBoolEnv(key string, dotEnvMap map[string]string, defaultValue bool) (bool, error) {
+	valStr := getEnv(key, dotEnvMap)
+	if valStr == "" {
+		return defaultValue, nil
+	}
+	val, err := strconv.ParseBool(valStr)
+	if err != nil {
+		return defaultValue, fmt.Errorf("invalid %s value %q: %w", key, valStr, err)
+	}
+	return val, nil
 }

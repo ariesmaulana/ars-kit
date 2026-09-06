@@ -3,6 +3,7 @@ package user_test
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -858,3 +859,58 @@ func TestHandlerUnassignRole_NoTokenReturns401(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+// ──────────────────────────────────────────────────────────────
+// PUT /api/v1/users/profile/avatar
+// ──────────────────────────────────────────────────────────────
+
+func TestHandlerUploadAvatar_Success(t *testing.T) {
+	e, fake := newHandlerSetup()
+
+	fake.UploadAvatarReturns(&user.UploadAvatarOutput{
+		Success: true,
+		Message: "Avatar upload accepted",
+	})
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("avatar", "photo.jpg")
+	fw.Write([]byte{0xff, 0xd8, 0xff, 0xd9})
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/avatar", &buf)
+	req.Header.Set(echo.HeaderContentType, mw.FormDataContentType())
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+
+	var resp user.AvatarUploadResponse
+	decodeJSON(t, rec, &resp)
+	assert.True(t, resp.Success)
+	assert.Equal(t, "Avatar upload accepted", resp.Message)
+
+	require.Equal(t, 1, fake.UploadAvatarCallCount())
+	_, input := fake.UploadAvatarArgsForCall(0)
+	assert.Equal(t, 7, input.Id)
+	assert.Equal(t, "photo.jpg", input.Filename)
+}
+
+func TestHandlerUploadAvatar_NoFileReturns400(t *testing.T) {
+	e, _ := newHandlerSetup()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.Close()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/profile/avatar", &buf)
+	req.Header.Set(echo.HeaderContentType, mw.FormDataContentType())
+	req.Header.Set(echo.HeaderAuthorization, bearerToken(7))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func strPtr(s string) *string { return &s }

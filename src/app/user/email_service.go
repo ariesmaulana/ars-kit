@@ -23,16 +23,17 @@ func (s *service) tokenExpiry() time.Duration {
 
 // queueEmail enqueues an email for delivery by the send_email workflow worker.
 // The send is fire-and-forget: send failures are handled by the worker's
-// retry policy, never by the HTTP request that enqueued it. When no engine is
-// installed (e.g. unit tests), the enqueue fails and is logged, not fatal.
-func (s *service) queueEmail(ctx context.Context, traceId string, msg email.EmailMessage) {
+// retry policy, never by the HTTP request that enqueued it. It returns an
+// error so callers never silently swallow enqueue failures.
+func (s *service) queueEmail(ctx context.Context, traceId string, msg email.EmailMessage) error {
 	if _, err := workflow.Register(ctx, workflow.NewSendEmailJob(traceId, msg)); err != nil {
-		log.Warn().
-			Err(err).
+		log.Err(err).
 			Str("traceId", traceId).
 			Strs("to", msg.To).
 			Msg("failed to enqueue email workflow")
+		return fmt.Errorf("enqueue email workflow: %w", err)
 	}
+	return nil
 }
 
 // emailTokenResult bundles the outputs of validateEmailToken so callers
@@ -126,8 +127,8 @@ func (s *service) ForgotPassword(ctx context.Context, input *ForgotPasswordInput
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Message = genericEmailSuccess
-		resp.Success = true
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -139,7 +140,10 @@ func (s *service) ForgotPassword(ctx context.Context, input *ForgotPasswordInput
 			Str("email", input.Email).
 			Msg("forgot password: email not found")
 		if err := db.Commit(); err != nil {
-			log.Err(err).Msg("failed to commit")
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+			resp.Message = "Failed to process request"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
 		}
 		resp.Success = true
 		resp.Message = genericEmailSuccess
@@ -152,19 +156,19 @@ func (s *service) ForgotPassword(ctx context.Context, input *ForgotPasswordInput
 			Str("traceId", input.TraceId).
 			Int("userId", u.Id).
 			Msg("failed to create reset token")
-		resp.Success = true
-		resp.Message = genericEmailSuccess
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
 	if err := db.Commit(); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
-		resp.Success = true
-		resp.Message = genericEmailSuccess
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
-	s.queueEmail(ctx, input.TraceId, email.EmailMessage{
+	if err := s.queueEmail(ctx, input.TraceId, email.EmailMessage{
 		To:      []string{u.Email},
 		Subject: "Reset your password",
 		Text: "Hi " + u.FullName + ",\n\n" +
@@ -173,7 +177,11 @@ func (s *service) ForgotPassword(ctx context.Context, input *ForgotPasswordInput
 			fmtDuration(s.tokenExpiry()) + ":\n\n" +
 			s.buildResetLink(token) + "\n\n" +
 			"If you didn't request this, ignore this email.\n",
-	})
+	}); err != nil {
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
 
 	log.Info().
 		Str("traceId", input.TraceId).
@@ -283,8 +291,8 @@ func (s *service) SendVerificationEmail(ctx context.Context, input *SendVerifica
 	db, err := s.storage.BeginTx(ctx)
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("Failed to begin transaction")
-		resp.Success = true
-		resp.Message = genericEmailSuccess
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 	defer db.Rollback()
@@ -296,7 +304,10 @@ func (s *service) SendVerificationEmail(ctx context.Context, input *SendVerifica
 			Str("email", input.Email).
 			Msg("send verification: email not found")
 		if err := db.Commit(); err != nil {
-			log.Err(err).Msg("failed to commit")
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+			resp.Message = "Failed to process request"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
 		}
 		resp.Success = true
 		resp.Message = genericEmailSuccess
@@ -304,7 +315,10 @@ func (s *service) SendVerificationEmail(ctx context.Context, input *SendVerifica
 	}
 	if u.EmailVerifiedAt != nil {
 		if err := db.Commit(); err != nil {
-			log.Err(err).Msg("failed to commit")
+			log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
+			resp.Message = "Failed to process request"
+			resp.ErrorCode = ErrorCodeInternal
+			return resp
 		}
 		resp.Success = true
 		resp.Message = "Email already verified"
@@ -315,19 +329,19 @@ func (s *service) SendVerificationEmail(ctx context.Context, input *SendVerifica
 	if err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Int("userId", u.Id).
 			Msg("failed to create verification token")
-		resp.Success = true
-		resp.Message = genericEmailSuccess
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
 	if err := db.Commit(); err != nil {
 		log.Err(err).Str("traceId", input.TraceId).Msg("failed to commit")
-		resp.Success = true
-		resp.Message = genericEmailSuccess
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
 		return resp
 	}
 
-	s.queueEmail(ctx, input.TraceId, email.EmailMessage{
+	if err := s.queueEmail(ctx, input.TraceId, email.EmailMessage{
 		To:      []string{u.Email},
 		Subject: "Verify your email address",
 		Text: "Hi " + u.FullName + ",\n\n" +
@@ -335,7 +349,11 @@ func (s *service) SendVerificationEmail(ctx context.Context, input *SendVerifica
 			"It expires in " + fmtDuration(s.tokenExpiry()) + ":\n\n" +
 			s.buildVerifyLink(token) + "\n\n" +
 			"If you didn't create this account, ignore this email.\n",
-	})
+	}); err != nil {
+		resp.Message = "Failed to process request"
+		resp.ErrorCode = ErrorCodeInternal
+		return resp
+	}
 
 	log.Info().
 		Str("traceId", input.TraceId).

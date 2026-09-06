@@ -77,6 +77,11 @@ type StorageTx interface {
 	// successful login. Callers must hold the row lock (LockUserLoginState).
 	ResetLoginState(ctx context.Context, id int) error
 
+	// UpdateAvatarKey sets the user's avatar key (storage-relative path) and
+	// bumps updated_at. Exec-based, so a missing id is not an error; callers
+	// should hold the row lock (LockUserById) first when existence matters.
+	UpdateAvatarKey(ctx context.Context, id int, avatarKey string) error
+
 	// UpdateLastLogin sets last_login_at (and updated_at) to the given time
 	// for the user. The caller passes the timestamp (e.g. clock.Now()) so the
 	// write is deterministic and testable, instead of relying on SQL NOW().

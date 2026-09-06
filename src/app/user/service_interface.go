@@ -2,28 +2,14 @@ package user
 
 import (
 	"context"
+	"io"
 	"time"
-
-	"github.com/ariesmaulana/ars-kit/src/app/workflow"
 )
 
 // Service defines the interface for user business logic
 type Service interface {
 	// Register creates a new user account
 	Register(ctx context.Context, input *RegisterInput) *RegisterOutput
-
-	// DemoWorkflow validates the input and enqueues a demo workflow job
-	// instead of creating the user synchronously. Background workers create
-	// the user and grant it the workflow permission.
-	DemoWorkflow(ctx context.Context, input *DemoWorkflowInput) *DemoWorkflowOutput
-
-	// RegisterUser creates a user account. It is the seam the demo workflow's
-	// RegisterUser step calls.
-	RegisterUser(ctx context.Context, input *workflow.RegisterUserInput) *workflow.RegisterUserOutput
-
-	// GrantPermissionSystem grants a permission without the super-user actor
-	// check. It is the seam the demo workflow's GrantPermission step calls.
-	GrantPermissionSystem(ctx context.Context, input *workflow.GrantPermissionInput) *workflow.GrantPermissionOutput
 
 	// Login authenticates a user. On success the output carries the freshly
 	// issued access and refresh tokens (the refresh token is persisted
@@ -100,22 +86,11 @@ type Service interface {
 	// user also revokes all their active refresh tokens so existing sessions
 	// die immediately; an actor cannot disable/suspend their own account.
 	UpdateUserStatus(ctx context.Context, input *UpdateUserStatusInput) *UpdateUserStatusOutput
-}
 
-// DemoWorkflowInput represents input for the async demo registration. The
-// user is not created synchronously — a demo workflow job is enqueued instead.
-type DemoWorkflowInput struct {
-	TraceId  string
-	Email    string
-	Username string
-}
-
-// DemoWorkflowOutput represents output after enqueuing the demo workflow.
-type DemoWorkflowOutput struct {
-	Success   bool
-	Message   string
-	TraceId   string
-	ErrorCode ErrorCode
+	// UploadAvatar validates a profile photo, spools it to the staging dir,
+	// and enqueues the avatar_upload workflow. Async: success means the
+	// upload was accepted, not stored.
+	UploadAvatar(ctx context.Context, input *UploadAvatarInput) *UploadAvatarOutput
 }
 
 // ErrorCode categorizes why an operation failed so adapters can map it to an
@@ -454,6 +429,27 @@ type VerifyEmailInput struct {
 
 // VerifyEmailOutput is the email-verification result.
 type VerifyEmailOutput struct {
+	Success   bool
+	Message   string
+	TraceId   string
+	ErrorCode ErrorCode
+}
+
+// UploadAvatarInput carries the file primitives the handler extracts from
+// the multipart form. The upload lib never touches multipart directly.
+type UploadAvatarInput struct {
+	TraceId  string
+	Id       int
+	Reader   io.Reader
+	Filename string
+	SizeHint int64
+}
+
+// UploadAvatarOutput is the acceptance result of a profile-photo upload.
+// The upload itself runs in the avatar_upload workflow, so on success there
+// is no key, MIME, size, or updated User yet — only the trace id the client
+// can correlate with. Clients re-fetch the profile to see the new avatar.
+type UploadAvatarOutput struct {
 	Success   bool
 	Message   string
 	TraceId   string

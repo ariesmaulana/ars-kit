@@ -17,6 +17,13 @@ definitions:
       user:
         $ref: '#/definitions/user.UserDTO'
     type: object
+  user.AvatarUploadResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   user.LoginRequest:
     properties:
       password:
@@ -75,13 +82,14 @@ definitions:
       email:
         type: string
       full_name:
+        maxLength: 100
         type: string
       password:
-        minLength: 6
+        minLength: 12
         type: string
       username:
         maxLength: 50
-        minLength: 3
+        minLength: 5
         type: string
     required:
     - email
@@ -118,6 +126,8 @@ definitions:
     type: object
   user.UserDTO:
     properties:
+      avatar_key:
+        type: string
       created_at:
         type: string
       email:
@@ -165,8 +175,8 @@ paths:
       consumes:
       - application/json
       description: |-
-        List users with pagination and an optional username/email
-        filter. Requires the super_user permission.
+        List users with pagination and optional username/email filter
+        and account-status filter. Requires the super_user permission.
       parameters:
       - description: Page (1-based, default 1)
         in: query
@@ -179,6 +189,10 @@ paths:
       - description: Filter by username or email substring
         in: query
         name: q
+        type: string
+      - description: 'Filter by status: active, disabled, suspended'
+        in: query
+        name: status
         type: string
       produces:
       - application/json
@@ -422,6 +436,49 @@ paths:
       summary: Get user profile
       tags:
       - users
+  /api/v1/users/profile/avatar:
+    put:
+      consumes:
+      - multipart/form-data
+      description: |-
+        Upload a profile photo. Accepts multipart form field "avatar";
+        only jpeg/png/webp up to 2MB. The file is staged and uploaded
+        asynchronously by the avatar_upload workflow: a 202 means the
+        upload was accepted, not stored. Re-fetch the profile to see it.
+      parameters:
+      - description: Avatar image file
+        in: formData
+        name: avatar
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/user.AvatarUploadResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.AvatarUploadResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.AvatarUploadResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/user.AvatarUploadResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.AvatarUploadResponse'
+      security:
+      - BearerAuth: []
+      summary: Upload profile avatar
+      tags:
+      - users
   /api/v1/users/profile/password:
     put:
       consumes:
@@ -567,39 +624,6 @@ paths:
           schema:
             $ref: '#/definitions/user.AuthResponse'
       summary: Register a new user
-      tags:
-      - users
-  /api/v1/users/register-workflow:
-    post:
-      consumes:
-      - application/json
-      description: |-
-        Validate the input and enqueue a register_user workflow job.
-        The user is created and granted its permission by background
-        workers instead of synchronously in the request.
-      parameters:
-      - description: User registration data
-        in: body
-        name: user
-        required: true
-        schema:
-          $ref: '#/definitions/user.RegisterRequest'
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: Accepted
-          schema:
-            $ref: '#/definitions/user.AuthResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/user.AuthResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/user.AuthResponse'
-      summary: Register a user asynchronously via the workflow engine
       tags:
       - users
   /api/v1/users/roles/assign:

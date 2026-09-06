@@ -47,7 +47,7 @@ func (st *storageTx) ListUsers(ctx context.Context, page, size int, filter, stat
 	}
 
 	query := `
-		SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at
+		SELECT id, username, email, full_name, status, avatar_key, email_verified_at, last_login_at, created_at, updated_at
 		FROM users
 		WHERE ($1 = '' OR username ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
 		AND ($4 = '' OR status::text = $4)
@@ -123,7 +123,7 @@ func (st *storageTx) InsertUser(ctx context.Context, username, email, fullName, 
 	return id, ErrTypeNone, nil
 }
 func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
-	query := `	SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1`
+	query := `SELECT id, username, email, full_name, status, avatar_key, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -133,7 +133,7 @@ func (st *storageTx) GetUserById(ctx context.Context, id int) (User, error) {
 }
 
 func (st *storageTx) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)`
+	query := `SELECT id, username, email, full_name, status, avatar_key, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)`
 	row := st.tx.QueryRow(ctx, query, email)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -143,7 +143,7 @@ func (st *storageTx) GetUserByEmail(ctx context.Context, email string) (User, er
 }
 
 func (st *storageTx) GetUserByUsername(ctx context.Context, username string) (User, error) {
-	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE username = $1`
+	query := `SELECT id, username, email, full_name, status, avatar_key, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE username = $1`
 	row := st.tx.QueryRow(ctx, query, username)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -222,7 +222,7 @@ func (st *storageTx) GetRecentPasswordHashes(ctx context.Context, userID int, li
 // LockUserById locks a user row for update and returns the user
 // This implements pessimistic locking to prevent concurrent modifications
 func (st *storageTx) LockUserById(ctx context.Context, id int) (User, StorageErrorType, error) {
-	query := `SELECT id, username, email, full_name, status, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
+	query := `SELECT id, username, email, full_name, status, avatar_key, email_verified_at, last_login_at, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE`
 	row := st.tx.QueryRow(ctx, query, id)
 	user, err := convertUserRow(row)
 	if err != nil {
@@ -319,7 +319,7 @@ func convertUserRow(row pgx.Row) (User, error) {
 	var user User
 	var status string
 	var lastLoginAt *time.Time
-	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &user.EmailVerifiedAt, &lastLoginAt, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.Id, &user.Username, &user.Email, &user.FullName, &status, &user.AvatarKey, &user.EmailVerifiedAt, &lastLoginAt, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return User{}, err
 	}
@@ -364,6 +364,17 @@ func (st *storageTx) ResetLoginState(ctx context.Context, id int) error {
 	_, err := st.tx.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to reset login state: %w", err)
+	}
+	return nil
+}
+
+// UpdateAvatarKey sets the user's avatar key (storage-relative path) and
+// bumps updated_at.
+func (st *storageTx) UpdateAvatarKey(ctx context.Context, id int, avatarKey string) error {
+	query := `UPDATE users SET avatar_key = $2, updated_at = NOW() WHERE id = $1`
+	_, err := st.tx.Exec(ctx, query, id, avatarKey)
+	if err != nil {
+		return fmt.Errorf("failed to update avatar key: %w", err)
 	}
 	return nil
 }

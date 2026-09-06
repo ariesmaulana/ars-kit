@@ -47,7 +47,7 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 	query := `
 		INSERT INTO users (username, email, full_name, password, status, email_verified_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), NOW())
-		RETURNING id, username, email, full_name, status, created_at, updated_at
+		RETURNING id, username, email, full_name, status, avatar_key, created_at, updated_at
 	`
 
 	var u user.User
@@ -64,6 +64,7 @@ func (h *TestHelper) InsertUser(ctx context.Context, t *testing.T, username, ema
 		&u.Email,
 		&u.FullName,
 		&u.Status,
+		&u.AvatarKey,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -98,7 +99,7 @@ func (h *TestHelper) InsertUnverifiedUser(ctx context.Context, t *testing.T, use
 	query := `
 		INSERT INTO users (username, email, full_name, password, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		RETURNING id, username, email, full_name, status, created_at, updated_at
+		RETURNING id, username, email, full_name, status, avatar_key, created_at, updated_at
 	`
 
 	var u user.User
@@ -115,6 +116,7 @@ func (h *TestHelper) InsertUnverifiedUser(ctx context.Context, t *testing.T, use
 		&u.Email,
 		&u.FullName,
 		&u.Status,
+		&u.AvatarKey,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -153,7 +155,7 @@ func (h *TestHelper) ClearUsers(ctx context.Context, t *testing.T) {
 // GetUserById retrieves a user by ID
 func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *user.User {
 	query := `
-		SELECT id, username, email, full_name, status, created_at, updated_at
+		SELECT id, username, email, full_name, status, avatar_key, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -165,6 +167,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 		&u.Email,
 		&u.FullName,
 		&u.Status,
+		&u.AvatarKey,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -176,7 +179,7 @@ func (h *TestHelper) GetUserById(ctx context.Context, t *testing.T, id int) *use
 // GetUserByUsername retrieves a user by username
 func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, username string) *user.User {
 	query := `
-		SELECT id, username, email, full_name, status, created_at, updated_at
+		SELECT id, username, email, full_name, status, avatar_key, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -188,6 +191,7 @@ func (h *TestHelper) GetUserByUsername(ctx context.Context, t *testing.T, userna
 		&u.Email,
 		&u.FullName,
 		&u.Status,
+		&u.AvatarKey,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -216,7 +220,7 @@ func (h *TestHelper) CountUsers(ctx context.Context, t *testing.T) int {
 // GetAllUsers retrieves all users as a map indexed by user ID
 func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user.User {
 	query := `
-		SELECT id, username, email, full_name, status, created_at, updated_at
+		SELECT id, username, email, full_name, status, avatar_key, created_at, updated_at
 		FROM users
 		ORDER BY id
 	`
@@ -234,6 +238,7 @@ func (h *TestHelper) GetAllUsers(ctx context.Context, t *testing.T) map[int]user
 			&u.Email,
 			&u.FullName,
 			&u.Status,
+			&u.AvatarKey,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		)
@@ -342,6 +347,13 @@ func createFailedUnassign() *permission.UnassignRoleOutput {
 func (h *TestHelper) CountRefreshTokens(ctx context.Context, t *testing.T, userID int) int {
 	var count int
 	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1", userID).Scan(&count)
+	assert.Nil(t, err)
+	return count
+}
+
+func (h *TestHelper) CountWorkflowJobs(ctx context.Context, t *testing.T, traceID, workflowName string) int {
+	var count int
+	err := h.pool.QueryRow(ctx, "SELECT COUNT(*) FROM workflow_job WHERE trace_id = $1 AND workflow_name = $2", traceID, workflowName).Scan(&count)
 	assert.Nil(t, err)
 	return count
 }

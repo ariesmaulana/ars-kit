@@ -93,7 +93,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	// Public routes
 	public := users.Group("", authLimiter)
 	public.POST("/register", h.Register)
-	public.POST("/register-workflow", h.RegisterWorkflow)
+
 	public.POST("/login", h.Login)
 	public.POST("/refresh", h.Refresh)
 	public.POST("/logout", h.Logout)
@@ -108,6 +108,7 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 	protected.GET("/profile", h.Profile)
 	protected.PUT("/profile/username", h.UpdateUsername)
 	protected.PUT("/profile/password", h.UpdatePassword)
+	protected.PUT("/profile/avatar", h.UploadAvatar)
 	protected.POST("/roles/assign", h.AssignRole)
 	protected.POST("/roles/unassign", h.UnassignRole)
 	protected.POST("/roles/permissions/grant", h.AssignPermissionToRole)
@@ -124,10 +125,10 @@ func (h *Handler) RegisterRoutes(g *echo.Group) {
 
 // RegisterRequest represents the HTTP request body for user registration
 type RegisterRequest struct {
-	Username string `json:"username" validate:"required,min=3,max=50"`
+	Username string `json:"username" validate:"required,min=5,max=50"`
 	Email    string `json:"email" validate:"required,email"`
-	FullName string `json:"full_name" validate:"required"`
-	Password string `json:"password" validate:"required,min=6"`
+	FullName string `json:"full_name" validate:"required,max=100"`
+	Password string `json:"password" validate:"required,min=12"`
 }
 
 // LoginRequest represents the HTTP request body for user login
@@ -196,6 +197,7 @@ type UserDTO struct {
 	Username  string    `json:"username"`
 	Email     string    `json:"email"`
 	FullName  string    `json:"full_name"`
+	AvatarKey *string   `json:"avatar_key,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -238,6 +240,7 @@ func toUserDTO(user User) UserDTO {
 		Username:  user.Username,
 		Email:     user.Email,
 		FullName:  user.FullName,
+		AvatarKey: user.AvatarKey,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
@@ -292,50 +295,6 @@ func (h *Handler) Register(c echo.Context) error {
 		Token:        output.AccessToken,
 		RefreshToken: output.RefreshToken,
 		User:         &dto,
-	})
-}
-
-// RegisterWorkflow handles POST /api/v1/users/register-workflow
-// @Summary Register a user asynchronously via the workflow engine
-// @Description Validate the input and enqueue a register_user workflow job.
-// @Description The user is created and granted its permission by background
-// @Description workers instead of synchronously in the request.
-// @Tags users
-// @Accept json
-// @Produce json
-// @Param user body RegisterRequest true "User registration data"
-// @Success 202 {object} AuthResponse
-// @Failure 400 {object} AuthResponse
-// @Failure 500 {object} AuthResponse
-// @Router /api/v1/users/register-workflow [post]
-func (h *Handler) RegisterWorkflow(c echo.Context) error {
-	traceID := xid.New().String()
-
-	var req RegisterRequest
-	if err := bindJSON(c, &req); err != nil {
-		log.Err(err).Str("path", c.Path()).Msg("failed to bind JSON request body")
-		return c.JSON(http.StatusBadRequest, AuthResponse{
-			Success: false,
-			Message: "Invalid request body",
-		})
-	}
-
-	output := h.service.DemoWorkflow(c.Request().Context(), &DemoWorkflowInput{
-		TraceId:  traceID,
-		Email:    req.Email,
-		Username: req.Username,
-	})
-
-	if !output.Success {
-		return c.JSON(statusForError(output.ErrorCode), AuthResponse{
-			Success: false,
-			Message: output.Message,
-		})
-	}
-
-	return c.JSON(http.StatusAccepted, AuthResponse{
-		Success: true,
-		Message: "Demo workflow queued",
 	})
 }
 
@@ -769,6 +728,81 @@ func (h *Handler) UpdatePassword(c echo.Context) error {
 	return c.JSON(http.StatusOK, UserResponse{
 		Success: true,
 		Message: "Password updated successfully",
+	})
+}
+
+// AvatarUploadResponse represents the HTTP response for avatar upload.
+// The upload runs async in the avatar_upload workflow, so the endpoint
+// answers 202 with an acceptance only; the client re-fetches the profile
+// to see the new avatar once the worker finishes.
+type AvatarUploadResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// UploadAvatar handles PUT /api/v1/users/profile/avatar
+// @Summary Upload profile avatar
+// @Description Upload a profile photo. Accepts multipart form field "avatar";
+// @Description only jpeg/png/webp up to 2MB. The file is staged and uploaded
+// @Description asynchronously by the avatar_upload workflow: a 202 means the
+// @Description upload was accepted, not stored. Re-fetch the profile to see it.
+// @Tags users
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param avatar formData file true "Avatar image file"
+// @Success 202 {object} AvatarUploadResponse
+// @Failure 400 {object} AvatarUploadResponse
+// @Failure 401 {object} AvatarUploadResponse
+// @Failure 403 {object} AvatarUploadResponse
+// @Failure 500 {object} AvatarUploadResponse
+// @Router /api/v1/users/profile/avatar [put]
+func (h *Handler) UploadAvatar(c echo.Context) error {
+	traceID := xid.New().String()
+
+	userID, err := GetUserIdFromContext(c)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, AvatarUploadResponse{
+			Success: false,
+			Message: "User not authenticated",
+		})
+	}
+
+	fh, err := c.FormFile("avatar")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, AvatarUploadResponse{
+			Success: false,
+			Message: "avatar file is required",
+		})
+	}
+	f, err := fh.Open()
+	if err != nil {
+		log.Err(err).Str("path", c.Path()).Msg("failed to open uploaded avatar file")
+		return c.JSON(http.StatusInternalServerError, AvatarUploadResponse{
+			Success: false,
+			Message: "cannot open file",
+		})
+	}
+	defer f.Close()
+
+	output := h.service.UploadAvatar(c.Request().Context(), &UploadAvatarInput{
+		TraceId:  traceID,
+		Id:       userID,
+		Reader:   f,
+		Filename: fh.Filename,
+		SizeHint: fh.Size,
+	})
+
+	if !output.Success {
+		return c.JSON(statusForError(output.ErrorCode), AvatarUploadResponse{
+			Success: false,
+			Message: output.Message,
+		})
+	}
+
+	return c.JSON(http.StatusAccepted, AvatarUploadResponse{
+		Success: true,
+		Message: output.Message,
 	})
 }
 

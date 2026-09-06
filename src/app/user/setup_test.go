@@ -66,7 +66,28 @@ func initUserAppWithThrottle(app *testsuite.AppContext, throttle user.LoginThrot
 		SecretKey:       "test-secret",
 		ExpirationHours: 24,
 	})
-	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, clockSource...)
+	service := user.NewService(storage, permissionService, throttle, jwtService, user.EmailConfig{}, "", clockSource...)
+
+	return &UserApp{
+		AppContext:        app,
+		Helper:            helper,
+		Storage:           storage,
+		Service:           service,
+		PermissionSvcMock: permissionService,
+	}
+}
+
+// initUserAppWithStagingDir is initUserApp with a caller-provided avatar
+// staging dir, for tests that exercise the async UploadAvatar spool path.
+func initUserAppWithStagingDir(app *testsuite.AppContext, stagingDir string) *UserApp {
+	helper := NewTestHelper(app.Pool)
+	storage := user.NewStorage(app.Pool)
+	permissionService := &permissionfakes.ServiceFake{}
+	jwtService := user.NewJWTService(user.JWTConfig{
+		SecretKey:       "test-secret",
+		ExpirationHours: 24,
+	})
+	service := user.NewService(storage, permissionService, user.DefaultLoginThrottleConfig(), jwtService, user.EmailConfig{}, stagingDir)
 
 	return &UserApp{
 		AppContext:        app,
@@ -82,7 +103,11 @@ func RunTest(t *testing.T, testFunc func(t *testing.T, suite *TestSuite)) {
 	t.Parallel()
 	cfg := testsuite.InitTestConfig()
 
-	baseSuite, err := testsuite.NewSuite(cfg, database.UserOnly)
+	// User + workflow tables: Register enqueues a send_email job, so the
+	// workflow_job table must exist or the enqueue path is untestable
+	// (exactly how the missing verification email went unnoticed).
+	domains := []database.Domain{database.All[0], database.All[2]}
+	baseSuite, err := testsuite.NewSuite(cfg, domains)
 	if err != nil {
 		t.Fatalf("Failed to create test suite: %v", err)
 	}
