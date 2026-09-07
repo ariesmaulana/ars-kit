@@ -88,6 +88,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/users/forgot-password": {
+            "post": {
+                "description": "Send a password-reset email. Always returns success with a\ngeneric message, even if the email is unknown, to avoid leaking\naccount existence.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Request password reset",
+                "parameters": [
+                    {
+                        "description": "Email to send reset link to",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ForgotPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users/login": {
             "post": {
                 "description": "Authenticate user and return JWT token",
@@ -166,6 +212,24 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.UserResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.UserResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/user.UserResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/user.UserResponse"
                         }
@@ -504,6 +568,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/users/reset-password": {
+            "post": {
+                "description": "Set a new password using the token emailed by forgot-password.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Reset password with token",
+                "parameters": [
+                    {
+                        "description": "Reset token and new password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.ResetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users/roles/assign": {
             "post": {
                 "security": [
@@ -714,7 +824,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "description": "Role removal data",
-                        "name": "body",
+                        "name": "role",
                         "in": "body",
                         "required": true,
                         "schema": {
@@ -751,6 +861,98 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/user.ManageRoleResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/send-verification": {
+            "post": {
+                "description": "Send (or re-send) an email-verification link. Does not reveal\nwhether the email exists or was already verified.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Request verification email",
+                "parameters": [
+                    {
+                        "description": "Email to verify",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.SendVerificationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/verify-email": {
+            "post": {
+                "description": "Confirm an email address using the token emailed after sign-up\nor via send-verification.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Verify email with token",
+                "parameters": [
+                    {
+                        "description": "Verification token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.VerifyEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/user.MessageResponse"
                         }
                     }
                 }
@@ -991,6 +1193,17 @@ const docTemplate = `{
                 }
             }
         },
+        "user.ForgotPasswordRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
         "user.LoginRequest": {
             "type": "object",
             "required": [
@@ -1037,6 +1250,17 @@ const docTemplate = `{
             }
         },
         "user.ManageRoleResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "user.MessageResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -1096,6 +1320,33 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 50,
                     "minLength": 5
+                }
+            }
+        },
+        "user.ResetPasswordRequest": {
+            "type": "object",
+            "required": [
+                "new_password",
+                "token"
+            ],
+            "properties": {
+                "new_password": {
+                    "type": "string",
+                    "minLength": 6
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "user.SendVerificationRequest": {
+            "type": "object",
+            "required": [
+                "email"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
                 }
             }
         },
@@ -1196,6 +1447,17 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "boolean"
+                }
+            }
+        },
+        "user.VerifyEmailRequest": {
+            "type": "object",
+            "required": [
+                "token"
+            ],
+            "properties": {
+                "token": {
+                    "type": "string"
                 }
             }
         }

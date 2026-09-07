@@ -419,6 +419,9 @@ func (h *Handler) Refresh(c echo.Context) error {
 // @Produce json
 // @Param credentials body RefreshRequest false "Refresh token (optional if refresh cookie is sent)"
 // @Success 200 {object} UserResponse
+// @Failure 400 {object} UserResponse
+// @Failure 401 {object} UserResponse
+// @Failure 500 {object} UserResponse
 // @Router /api/v1/users/logout [post]
 func (h *Handler) Logout(c echo.Context) error {
 	traceID := xid.New().String()
@@ -455,6 +458,18 @@ func (h *Handler) Logout(c echo.Context) error {
 }
 
 // ForgotPassword handles POST /api/v1/users/forgot-password
+// @Summary Request password reset
+// @Description Send a password-reset email. Always returns success with a
+// @Description generic message, even if the email is unknown, to avoid leaking
+// @Description account existence.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body ForgotPasswordRequest true "Email to send reset link to"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} MessageResponse
+// @Failure 500 {object} MessageResponse
+// @Router /api/v1/users/forgot-password [post]
 func (h *Handler) ForgotPassword(c echo.Context) error {
 	traceID := xid.New().String()
 
@@ -486,6 +501,16 @@ func (h *Handler) ForgotPassword(c echo.Context) error {
 }
 
 // ResetPassword handles POST /api/v1/users/reset-password
+// @Summary Reset password with token
+// @Description Set a new password using the token emailed by forgot-password.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body ResetPasswordRequest true "Reset token and new password"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} MessageResponse
+// @Failure 500 {object} MessageResponse
+// @Router /api/v1/users/reset-password [post]
 func (h *Handler) ResetPassword(c echo.Context) error {
 	traceID := xid.New().String()
 
@@ -518,6 +543,17 @@ func (h *Handler) ResetPassword(c echo.Context) error {
 }
 
 // SendVerificationEmail handles POST /api/v1/users/send-verification
+// @Summary Request verification email
+// @Description Send (or re-send) an email-verification link. Does not reveal
+// @Description whether the email exists or was already verified.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body SendVerificationRequest true "Email to verify"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} MessageResponse
+// @Failure 500 {object} MessageResponse
+// @Router /api/v1/users/send-verification [post]
 func (h *Handler) SendVerificationEmail(c echo.Context) error {
 	traceID := xid.New().String()
 
@@ -549,6 +585,17 @@ func (h *Handler) SendVerificationEmail(c echo.Context) error {
 }
 
 // VerifyEmail handles POST /api/v1/users/verify-email
+// @Summary Verify email with token
+// @Description Confirm an email address using the token emailed after sign-up
+// @Description or via send-verification.
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body VerifyEmailRequest true "Verification token"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} MessageResponse
+// @Failure 500 {object} MessageResponse
+// @Router /api/v1/users/verify-email [post]
 func (h *Handler) VerifyEmail(c echo.Context) error {
 	traceID := xid.New().String()
 
@@ -880,7 +927,7 @@ func (h *Handler) AssignRole(c echo.Context) error {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body ManageRoleRequest true "Role removal data"
+// @Param role body ManageRoleRequest true "Role removal data"
 // @Success 200 {object} ManageRoleResponse
 // @Failure 400 {object} ManageRoleResponse
 // @Failure 401 {object} ManageRoleResponse

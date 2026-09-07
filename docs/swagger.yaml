@@ -24,6 +24,13 @@ definitions:
       success:
         type: boolean
     type: object
+  user.ForgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
   user.LoginRequest:
     properties:
       password:
@@ -55,6 +62,13 @@ definitions:
     - user_id
     type: object
   user.ManageRoleResponse:
+    properties:
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  user.MessageResponse:
     properties:
       message:
         type: string
@@ -96,6 +110,24 @@ definitions:
     - full_name
     - password
     - username
+    type: object
+  user.ResetPasswordRequest:
+    properties:
+      new_password:
+        minLength: 6
+        type: string
+      token:
+        type: string
+    required:
+    - new_password
+    - token
+    type: object
+  user.SendVerificationRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
     type: object
   user.UpdatePasswordRequest:
     properties:
@@ -162,6 +194,13 @@ definitions:
         type: string
       success:
         type: boolean
+    type: object
+  user.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    required:
+    - token
     type: object
 host: localhost:8080
 info:
@@ -349,6 +388,39 @@ paths:
       summary: Update a user's status
       tags:
       - users
+  /api/v1/users/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Send a password-reset email. Always returns success with a
+        generic message, even if the email is unknown, to avoid leaking
+        account existence.
+      parameters:
+      - description: Email to send reset link to
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.ForgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+      summary: Request password reset
+      tags:
+      - users
   /api/v1/users/login:
     post:
       consumes:
@@ -402,6 +474,18 @@ paths:
       responses:
         "200":
           description: OK
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/user.UserResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/user.UserResponse'
       summary: Logout user
@@ -626,6 +710,36 @@ paths:
       summary: Register a new user
       tags:
       - users
+  /api/v1/users/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Set a new password using the token emailed by forgot-password.
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+      summary: Reset password with token
+      tags:
+      - users
   /api/v1/users/roles/assign:
     post:
       consumes:
@@ -760,7 +874,7 @@ paths:
       parameters:
       - description: Role removal data
         in: body
-        name: body
+        name: role
         required: true
         schema:
           $ref: '#/definitions/user.ManageRoleRequest'
@@ -790,6 +904,70 @@ paths:
       security:
       - BearerAuth: []
       summary: Unassign role
+      tags:
+      - users
+  /api/v1/users/send-verification:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Send (or re-send) an email-verification link. Does not reveal
+        whether the email exists or was already verified.
+      parameters:
+      - description: Email to verify
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.SendVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+      summary: Request verification email
+      tags:
+      - users
+  /api/v1/users/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Confirm an email address using the token emailed after sign-up
+        or via send-verification.
+      parameters:
+      - description: Verification token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/user.MessageResponse'
+      summary: Verify email with token
       tags:
       - users
 schemes:
